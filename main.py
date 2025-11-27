@@ -1,24 +1,23 @@
 import os
 from fastapi import FastAPI, Request, Form, Query
-from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+load_dotenv()
 
 from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
 from generate_pdf import generate_cv_gemini
 
-load_dotenv()
-
 app = FastAPI()
 
-# ----------------- Session -----------------
-# Simple in-memory session (use Redis/db for production)
+# Simple in-memory session (temporary)
 SESSION = {}
 
 # ----------------- CORS -----------------
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
 origins = [
-    FRONTEND_URL,
+    FRONTEND_URL,  # Lovable frontend
 ]
 
 app.add_middleware(
@@ -42,28 +41,34 @@ def login():
 @app.get("/oauth/callback")
 def callback(request: Request, code: str = None, error: str = None):
     """Handle LinkedIn OAuth callback"""
-    if error or not code:
-        return RedirectResponse(url=f"{FRONTEND_URL}/?error={error or 'no_code'}")
+    frontend_url = FRONTEND_URL
+    if error:
+        return RedirectResponse(url=f"{frontend_url}?error={error}")
+    if not code:
+        return RedirectResponse(url=f"{frontend_url}?error=no_code")
     
+    # Exchange code for access token
     token_result = get_access_token(code)
     if "error" in token_result:
-        return RedirectResponse(url=f"{FRONTEND_URL}/?error=token_failed")
+        return RedirectResponse(url=f"{frontend_url}?error=token_failed")
     
     access_token = token_result.get("access_token")
+    
+    # Fetch LinkedIn profile
     profile_result = get_linkedin_profile(access_token)
     if "error" in profile_result:
-        return RedirectResponse(url=f"{FRONTEND_URL}/?error=profile_failed")
+        return RedirectResponse(url=f"{frontend_url}?error=profile_failed")
     
-    # Store profile using user_id as key
+    # Store profile temporarily
     user_id = profile_result.get("id", "default")
     SESSION[user_id] = profile_result
-
-    # Redirect to frontend CV editor
-    return RedirectResponse(url=f"{FRONTEND_URL}/cv-editor?user_id={user_id}")
+    
+    # Redirect to CV editor with user_id in query
+    return RedirectResponse(url=f"{frontend_url}/cv-editor?user_id={user_id}")
 
 @app.get("/api/profile")
 def get_profile(user_id: str = Query(None)):
-    """Get LinkedIn profile data"""
+    """Get LinkedIn profile data as JSON"""
     if not user_id:
         return JSONResponse(status_code=400, content={"error": "user_id required"})
     
@@ -108,14 +113,5 @@ def download_cv(path: str = Query(...)):
     """Download generated CV PDF"""
     if not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
+    
     return FileResponse(path, filename=os.path.basename(path))
-
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
-
-# ----------------- Run -----------------
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
