@@ -1,27 +1,24 @@
 import os
 from fastapi import FastAPI, Request, Form, Query
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-
-load_dotenv()
 
 from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
 from generate_pdf import generate_cv_gemini
 
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+load_dotenv()
 
-# Use a simple in-memory session (for production, use Redis or database)
+app = FastAPI()
+
+# ----------------- Session -----------------
+# Simple in-memory session (use Redis/db for production)
 SESSION = {}
 
 # ----------------- CORS -----------------
-# Allow your Lovable frontend
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
 origins = [
-    "https://linked-resumes.lovable.app",
-    "http://localhost:8080",  # For local testing
-    "http://localhost:5173",  # Vite dev server
+    FRONTEND_URL,
 ]
 
 app.add_middleware(
@@ -45,35 +42,24 @@ def login():
 @app.get("/oauth/callback")
 def callback(request: Request, code: str = None, error: str = None):
     """Handle LinkedIn OAuth callback"""
-    if error:
-        frontend_url = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-        return RedirectResponse(url=f"{frontend_url}?error={error}")
+    if error or not code:
+        return RedirectResponse(url=f"{FRONTEND_URL}/?error={error or 'no_code'}")
     
-    if not code:
-        frontend_url = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-        return RedirectResponse(url=f"{frontend_url}?error=no_code")
-    
-    # Exchange code for access token
     token_result = get_access_token(code)
     if "error" in token_result:
-        frontend_url = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-        return RedirectResponse(url=f"{frontend_url}?error=token_failed")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?error=token_failed")
     
     access_token = token_result.get("access_token")
-    
-    # Fetch LinkedIn profile
     profile_result = get_linkedin_profile(access_token)
     if "error" in profile_result:
-        frontend_url = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-        return RedirectResponse(url=f"{frontend_url}?error=profile_failed")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?error=profile_failed")
     
-    # Store profile in session (use user ID as key for multiple users)
+    # Store profile using user_id as key
     user_id = profile_result.get("id", "default")
     SESSION[user_id] = profile_result
-    
-    # Redirect to frontend with user_id
-    frontend_url = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-    return RedirectResponse(url=f"{frontend_url}/cv-editor?user_id={user_id}")
+
+    # Redirect to frontend CV editor
+    return RedirectResponse(url=f"{FRONTEND_URL}/cv-editor?user_id={user_id}")
 
 @app.get("/api/profile")
 def get_profile(user_id: str = Query(None)):
@@ -122,14 +108,13 @@ def download_cv(path: str = Query(...)):
     """Download generated CV PDF"""
     if not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
-    
     return FileResponse(path, filename=os.path.basename(path))
 
-# Health check endpoint
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
 
+# ----------------- Run -----------------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
