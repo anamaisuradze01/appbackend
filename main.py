@@ -7,18 +7,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
-from generate_pdf import generate_cv_gemini
+from generate_pdf import generate_cv_gemini, regenerate_field_ai
 
 app = FastAPI()
 
-# Simple in-memory session (temporary)
 SESSION = {}
 
-# ----------------- CORS -----------------
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-origins = [
-    FRONTEND_URL,  # Lovable frontend
-]
+origins = [FRONTEND_URL]
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,55 +24,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------- Routes -----------------
 @app.get("/")
 def home():
     return {"message": "LinkedIn CV Generator API", "status": "running"}
 
-@app.get("/login")
-def login():
-    """Redirect to LinkedIn OAuth"""
-    return RedirectResponse(url=get_auth_url())
+# ---------------------- NEW ENDPOINT ----------------------
+@app.post("/regenerate_field")
+async def regenerate_field(
+    field: str = Form(...),
+    index: int = Form(default=None),
+    fullName: str = Form(""),
+    title: str = Form(""),
+    summary: str = Form(""),
+    skills: str = Form(""),
+    experience: str = Form(""),
+):
+    """
+    Regenerate individual field sections:
+      - skills
+      - summary
+      - experience[index]
+    """
+    try:
+        skills_list = [s.strip() for s in skills.split(",") if s.strip()]
+        exp_list = [e.strip() for e in experience.split("|||") if e.strip()]
 
-@app.get("/oauth/callback")
-def callback(request: Request, code: str = None, error: str = None):
-    """Handle LinkedIn OAuth callback"""
-    frontend_url = FRONTEND_URL
-    if error:
-        return RedirectResponse(url=f"{frontend_url}?error={error}")
-    if not code:
-        return RedirectResponse(url=f"{frontend_url}?error=no_code")
-    
-    # Exchange code for access token
-    token_result = get_access_token(code)
-    if "error" in token_result:
-        return RedirectResponse(url=f"{frontend_url}?error=token_failed")
-    
-    access_token = token_result.get("access_token")
-    
-    # Fetch LinkedIn profile
-    profile_result = get_linkedin_profile(access_token)
-    if "error" in profile_result:
-        return RedirectResponse(url=f"{frontend_url}?error=profile_failed")
-    
-    # Store profile temporarily
-    user_id = profile_result.get("id", "default")
-    SESSION[user_id] = profile_result
-    
-    # Redirect to CV editor with user_id in query
-    return RedirectResponse(url=f"{frontend_url}/cv-editor?user_id={user_id}")
+        result = regenerate_field_ai(
+            field=field,
+            index=index,
+            name=fullName,
+            title=title,
+            summary=summary,
+            skills=skills_list,
+            experience=exp_list
+        )
 
-@app.get("/api/profile")
-def get_profile(user_id: str = Query(None)):
-    """Get LinkedIn profile data as JSON"""
-    if not user_id:
-        return JSONResponse(status_code=400, content={"error": "user_id required"})
-    
-    profile = SESSION.get(user_id)
-    if not profile:
-        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-    
-    return profile
+        return {"result": result}
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ----------------------------------------------------------
 
 @app.post("/generate_cv")
 def generate_cv_endpoint(
@@ -86,7 +74,6 @@ def generate_cv_endpoint(
     title: str = Form(...),
     user_id: str = Form(...)
 ):
-    """Generate CV PDF"""
     profile = SESSION.get(user_id)
     if not profile:
         return JSONResponse(status_code=401, content={"error": "No profile found"})
@@ -103,15 +90,14 @@ def generate_cv_endpoint(
             style="minimal",
             user_id=user_id
         )
-        
         return {"link": f"/download_cv?path={pdf_path}"}
+
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 @app.get("/download_cv")
 def download_cv(path: str = Query(...)):
-    """Download generated CV PDF"""
     if not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
-    
     return FileResponse(path, filename=os.path.basename(path))
