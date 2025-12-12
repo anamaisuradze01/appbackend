@@ -49,8 +49,7 @@ Style: {style}
 - Tailored to the job title "{title}"
 - No headings or markdown
 - Professional tone
-""""""
-
+"""
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt)
