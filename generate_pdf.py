@@ -237,7 +237,6 @@ def generate_cv_basic(
 
 
 def wrap_text(text: str, max_chars: int):
-    """Simple text wrapper for basic PDF fallback."""
     words = text.split()
     lines = []
     current = []
