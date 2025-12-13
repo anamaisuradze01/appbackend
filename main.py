@@ -8,7 +8,12 @@ from typing import List
 load_dotenv()
 
 from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
-from generate_pdf import generate_cv_gemini, generate_summary_with_ai
+from generate_pdf import (
+    generate_cv_gemini,
+    generate_summary_with_ai,
+    generate_skills_with_ai,
+    generate_experience_description_with_ai
+)
 
 app = FastAPI()
 
@@ -63,13 +68,10 @@ def get_profile(user_id: str = Query(None)):
 # ----------------- CV Endpoints -----------------
 @app.post("/api/clear")
 def clear_cv(user_id: str = Query(...)):
-    """
-    Clear all CV fields for the given user.
-    """
+    """Clear all CV fields for the given user"""
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
     
-    # Reset user data to empty placeholders
     SESSION[user_id] = {
         "fullName": "",
         "title": "",
@@ -93,8 +95,8 @@ def regenerate_field(
 ):
     """
     Regenerate AI content for a specific field:
-    - skills
     - summary
+    - skills
     - experience (requires index)
     """
     if not user_id or user_id not in SESSION:
@@ -111,15 +113,21 @@ def regenerate_field(
             style="minimal"
         )
     elif field == "skills":
-        # Simple regeneration: could enhance with AI later
-        # Here we just return placeholder if empty
-        if not user_data.get("skills"):
-            user_data["skills"] = ["Skill1", "Skill2", "Skill3"]
+        user_data["skills"] = generate_skills_with_ai(
+            skills=user_data.get("skills", []),
+            title=user_data.get("title", ""),
+            experience=[e.get("description", "") for e in user_data.get("experience", [])]
+        )
     elif field == "experience":
         if index is None or index >= len(user_data.get("experience", [])):
             return JSONResponse(status_code=400, content={"error": "Invalid experience index"})
         exp_item = user_data["experience"][index]
-        exp_item["description"] = "Regenerated description for this experience using AI."
+        exp_item["description"] = generate_experience_description_with_ai(
+            title=exp_item.get("title", ""),
+            company=exp_item.get("company", ""),
+            years=exp_item.get("years", ""),
+            description=exp_item.get("description", "")
+        )
     else:
         return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
 
@@ -128,10 +136,8 @@ def regenerate_field(
 
 # ----------------- Generate CV PDF -----------------
 @app.post("/api/generate_cv")
-def generate_cv(
-    user_id: str = Query(...),
-):
-    """Generate CV PDF using Gemini AI"""
+def generate_cv(user_id: str = Query(...)):
+    """Generate CV PDF using Gemini AI (Tailor to Title)"""
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
 
