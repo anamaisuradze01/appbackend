@@ -3,7 +3,6 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from typing import List
 
 load_dotenv()
 
@@ -17,7 +16,7 @@ from generate_pdf import (
 
 app = FastAPI()
 
-# Simple in-memory session (temporary)
+# ----------------- In-memory session -----------------
 SESSION = {}
 
 # ----------------- CORS -----------------
@@ -93,12 +92,7 @@ def regenerate_field(
     field: str = Query(...),
     index: int = Query(None)
 ):
-    """
-    Regenerate AI content for a specific field:
-    - summary
-    - skills
-    - experience (requires index)
-    """
+    """Regenerate AI content for summary, skills, or experience"""
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
     
@@ -137,7 +131,7 @@ def regenerate_field(
 # ----------------- Generate CV PDF -----------------
 @app.post("/api/generate_cv")
 def generate_cv(user_id: str = Query(...)):
-    """Generate CV PDF using Gemini AI (Tailor to Title)"""
+    """Generate CV PDF using Gemini AI (Tailored to Title)"""
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
 
@@ -155,7 +149,7 @@ def generate_cv(user_id: str = Query(...)):
     )
     return JSONResponse(content={"status": "ok", "pdf_path": pdf_path})
 
-# ----------------- Download -----------------
+# ----------------- Download CV -----------------
 @app.get("/api/download_cv")
 def download_cv(path: str = Query(...)):
     """Download generated CV PDF"""
