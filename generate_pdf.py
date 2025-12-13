@@ -8,15 +8,87 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def generate_fallback_summary(name: str, title: str, skills: List[str], experience: List[str]) -> str:
+    """
+    Generate a basic summary without AI when API is unavailable.
+    """
+    skills_str = ", ".join(skills[:3]) if skills else "various technical skills"
+    exp_count = len(experience) if experience else 0
+    
+    return (
+        f"{name} is a {title} with expertise in {skills_str}. "
+        f"With proven experience across {exp_count} positions, "
+        f"brings a strong track record of delivering results and driving innovation."
+    )
+
+
+def generate_cv_basic(name: str, title: str, skills: List[str], experience: List[str], user_id: str = "default") -> str:
+    """
+    Generate a basic PDF without AI enhancement (fallback method).
+    """
+    safe_title = re.sub(r"[^\w\d-]", "_", title)[:50]
+    safe_user_id = re.sub(r"[^\w\d-]", "_", str(user_id))[:20]
+    
+    pdf_dir = os.path.join("/tmp", "pdfs") if os.path.exists("/tmp") else os.path.join(os.getcwd(), "pdfs")
+    os.makedirs(pdf_dir, exist_ok=True)
+    
+    cv_id = f"cv_{safe_user_id}_{safe_title}_{int(time.time())}"
+    pdf_path = os.path.join(pdf_dir, f"{cv_id}.pdf")
+    
+    try:
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, spaceAfter=6, textColor=HexColor('#2c3e50'), fontName='Helvetica-Bold')
+        subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Heading2'], fontSize=14, spaceAfter=12, textColor=HexColor('#7f8c8d'), fontName='Helvetica')
+        heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=13, spaceAfter=6, spaceBefore=16, textColor=HexColor('#34495e'), fontName='Helvetica-Bold')
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=6, leading=14)
+        
+        story.append(Paragraph(name, title_style))
+        story.append(Paragraph(title, subtitle_style))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Basic summary
+        summary = generate_fallback_summary(name, title, skills, experience)
+        story.append(Paragraph("Professional Summary", heading_style))
+        story.append(Paragraph(summary, normal_style))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Skills
+        if skills:
+            story.append(Paragraph("Skills", heading_style))
+            skills_text = " • ".join(skills)
+            story.append(Paragraph(skills_text, normal_style))
+            story.append(Spacer(1, 0.1*inch))
+        
+        # Experience
+        if experience:
+            story.append(Paragraph("Experience", heading_style))
+            for exp_text in experience:
+                exp_clean = exp_text.strip()
+                if exp_clean:
+                    story.append(Paragraph(f"• {exp_clean}", normal_style))
+            story.append(Spacer(1, 0.1*inch))
+        
+        doc.build(story)
+        print(f"✅ Basic CV generated successfully: {pdf_path}")
+        return pdf_path
+    except Exception as e:
+        print(f"❌ Error generating basic PDF: {e}")
+        raise
 
 
 def generate_cv_gemini(
@@ -62,7 +134,6 @@ def generate_cv_gemini(
         # Skills
         if skills:
             story.append(Paragraph("Skills", heading_style))
-            # Generate AI-enhanced skills if empty
             skills_text = " • ".join(skills)
             story.append(Paragraph(skills_text, normal_style))
             story.append(Spacer(1, 0.1*inch))
@@ -96,7 +167,8 @@ def generate_summary_with_ai(
     """
     Generate a professional summary using Gemini AI.
     """
-    if not GEMINI_API_KEY:
+    if not client:
+        print("⚠️ Gemini API not configured, using fallback summary")
         return generate_fallback_summary(name, title, skills, experience)
     
     prompt = f"""You are an expert CV writer. Generate a concise professional summary.
@@ -108,13 +180,17 @@ Experience: {', '.join(experience[:3])}
 Style: {style}
 
 Instructions:
-- 3-4 sentences
+- Write 3-4 sentences only
 - Focus on key achievements and value proposition
-- Professional tone"""
+- Use professional tone
+- Do not include any markdown formatting
+- Return only the summary text"""
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
         return response.text.strip() if response and response.text else generate_fallback_summary(name, title, skills, experience)
     except Exception as e:
         print(f"⚠️ Gemini API error: {e}")
@@ -125,44 +201,67 @@ def generate_skills_with_ai(skills: List[str], title: str, experience: List[str]
     """
     Generate an enhanced skills list using Gemini AI.
     """
-    if not GEMINI_API_KEY:
-        return skills if skills else ["Skill1", "Skill2", "Skill3"]
+    if not client:
+        print("⚠️ Gemini API not configured, returning existing skills")
+        return skills if skills else ["Communication", "Problem Solving", "Team Collaboration"]
     
-    prompt = f"""Generate a concise list of key skills for a {title} with experience: {', '.join(experience[:3])}.
-Current skills: {', '.join(skills[:5]) if skills else 'None'}.
-Return as a comma-separated list."""
+    current_skills = ', '.join(skills[:5]) if skills else 'None'
+    exp_summary = ', '.join(experience[:3]) if experience else 'None'
+    
+    prompt = f"""Generate a list of 8-12 relevant professional skills for a {title}.
+
+Current skills: {current_skills}
+Experience summary: {exp_summary}
+
+Instructions:
+- Return ONLY a comma-separated list of skills
+- Include both technical and soft skills
+- Make them specific and relevant to {title}
+- No explanations, no numbering, just skills separated by commas
+- Example format: Python, Leadership, Project Management, AWS"""
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
         if response and response.text:
-            return [s.strip() for s in response.text.split(",") if s.strip()]
-        return skills if skills else ["Skill1", "Skill2", "Skill3"]
+            generated_skills = [s.strip() for s in response.text.strip().split(",") if s.strip()]
+            return generated_skills if generated_skills else skills
+        return skills if skills else ["Communication", "Problem Solving", "Team Collaboration"]
     except Exception as e:
         print(f"⚠️ Gemini API error (skills): {e}")
-        return skills if skills else ["Skill1", "Skill2", "Skill3"]
+        return skills if skills else ["Communication", "Problem Solving", "Team Collaboration"]
 
 
 def generate_experience_description_with_ai(title: str, company: str, years: str, description: str = "") -> str:
     """
-    Regenerate experience description using Gemini AI.
+    Generate experience description using Gemini AI.
     """
-    if not GEMINI_API_KEY:
-        return description or "Describe your responsibilities and achievements."
+    if not client:
+        print("⚠️ Gemini API not configured, returning existing description")
+        return description or "Responsible for key duties and achievements in this role."
     
-    prompt = f"""Write a professional CV experience description.
+    prompt = f"""Write a professional CV experience description for:
 
 Job Title: {title}
 Company: {company}
 Years: {years}
-Current description: {description or 'None'}
+Current description: {description or 'None provided'}
 
-Keep it concise, professional, and achievement-focused."""
+Instructions:
+- Write 2-3 sentences describing responsibilities and achievements
+- Use action verbs and quantify results when possible
+- Professional tone, past tense for completed roles
+- No markdown formatting
+- Return only the description text"""
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text.strip() if response and response.text else description
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        return response.text.strip() if response and response.text else (description or "Responsible for key duties and achievements in this role.")
     except Exception as e:
         print(f"⚠️ Gemini API error (experience): {e}")
-        return description
+        return description or "Responsible for key duties and achievements in this role."
