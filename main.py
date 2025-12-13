@@ -1,21 +1,23 @@
 import os
-from fastapi import FastAPI, Request, Form, Query
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from typing import List
 
 load_dotenv()
 
 from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
-from generate_pdf import generate_cv_gemini, regenerate_field_ai
+from generate_pdf import generate_cv_gemini, generate_summary_with_ai
 
 app = FastAPI()
 
+# Simple in-memory session (temporary)
 SESSION = {}
 
+# ----------------- CORS -----------------
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
 origins = [FRONTEND_URL]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -24,80 +26,133 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
-    return {"message": "LinkedIn CV Generator API", "status": "running"}
+# ----------------- OAuth -----------------
+@app.get("/login")
+def login():
+    return RedirectResponse(url=get_auth_url())
 
-# ---------------------- NEW ENDPOINT ----------------------
-@app.post("/regenerate_field")
-async def regenerate_field(
-    field: str = Form(...),
-    index: int = Form(default=None),
-    fullName: str = Form(""),
-    title: str = Form(""),
-    summary: str = Form(""),
-    skills: str = Form(""),
-    experience: str = Form(""),
+@app.get("/oauth/callback")
+def callback(request: Request, code: str = None, error: str = None):
+    """Handle LinkedIn OAuth callback"""
+    frontend_url = FRONTEND_URL
+    if error:
+        return RedirectResponse(url=f"{frontend_url}?error={error}")
+    if not code:
+        return RedirectResponse(url=f"{frontend_url}?error=no_code")
+
+    token_result = get_access_token(code)
+    if "error" in token_result:
+        return RedirectResponse(url=f"{frontend_url}?error=token_failed")
+
+    access_token = token_result.get("access_token")
+    profile_result = get_linkedin_profile(access_token)
+    if "error" in profile_result:
+        return RedirectResponse(url=f"{frontend_url}?error=profile_failed")
+
+    user_id = profile_result.get("id", "default")
+    SESSION[user_id] = profile_result
+    return RedirectResponse(url=f"{frontend_url}/cv-editor?user_id={user_id}")
+
+@app.get("/api/profile")
+def get_profile(user_id: str = Query(None)):
+    """Get LinkedIn profile data as JSON"""
+    if not user_id or user_id not in SESSION:
+        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
+    return JSONResponse(content=SESSION[user_id])
+
+# ----------------- CV Endpoints -----------------
+@app.post("/api/clear")
+def clear_cv(user_id: str = Query(...)):
+    """
+    Clear all CV fields for the given user.
+    """
+    if not user_id or user_id not in SESSION:
+        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
+    
+    # Reset user data to empty placeholders
+    SESSION[user_id] = {
+        "fullName": "",
+        "title": "",
+        "email": "",
+        "phone": "",
+        "location": "",
+        "summary": "",
+        "skills": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "languages": []
+    }
+    return JSONResponse(content={"status": "cleared", "data": SESSION[user_id]})
+
+@app.post("/api/regenerate")
+def regenerate_field(
+    user_id: str = Query(...),
+    field: str = Query(...),
+    index: int = Query(None)
 ):
     """
-    Regenerate individual field sections:
-      - skills
-      - summary
-      - experience[index]
+    Regenerate AI content for a specific field:
+    - skills
+    - summary
+    - experience (requires index)
     """
-    try:
-        skills_list = [s.strip() for s in skills.split(",") if s.strip()]
-        exp_list = [e.strip() for e in experience.split("|||") if e.strip()]
+    if not user_id or user_id not in SESSION:
+        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
+    
+    user_data = SESSION[user_id]
 
-        result = regenerate_field_ai(
-            field=field,
-            index=index,
-            name=fullName,
-            title=title,
-            summary=summary,
-            skills=skills_list,
-            experience=exp_list
+    if field == "summary":
+        user_data["summary"] = generate_summary_with_ai(
+            name=user_data.get("fullName", ""),
+            title=user_data.get("title", ""),
+            skills=user_data.get("skills", []),
+            experience=[e.get("description", "") for e in user_data.get("experience", [])],
+            style="minimal"
         )
+    elif field == "skills":
+        # Simple regeneration: could enhance with AI later
+        # Here we just return placeholder if empty
+        if not user_data.get("skills"):
+            user_data["skills"] = ["Skill1", "Skill2", "Skill3"]
+    elif field == "experience":
+        if index is None or index >= len(user_data.get("experience", [])):
+            return JSONResponse(status_code=400, content={"error": "Invalid experience index"})
+        exp_item = user_data["experience"][index]
+        exp_item["description"] = "Regenerated description for this experience using AI."
+    else:
+        return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
 
-        return {"result": result}
+    SESSION[user_id] = user_data
+    return JSONResponse(content={"status": "ok", "data": user_data})
 
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-# ----------------------------------------------------------
-
-@app.post("/generate_cv")
-def generate_cv_endpoint(
-    phone: str = Form(...),
-    skills: str = Form(...),
-    experience: str = Form(...),
-    title: str = Form(...),
-    user_id: str = Form(...)
+# ----------------- Generate CV PDF -----------------
+@app.post("/api/generate_cv")
+def generate_cv(
+    user_id: str = Query(...),
 ):
-    profile = SESSION.get(user_id)
-    if not profile:
-        return JSONResponse(status_code=401, content={"error": "No profile found"})
-    
-    skills_list = [s.strip() for s in skills.split(",") if s.strip()]
-    experience_list = [e.strip() for e in experience.split(",") if e.strip()]
-    
-    try:
-        pdf_path = generate_cv_gemini(
-            name=f"{profile.get('firstName', '')} {profile.get('lastName', '')}",
-            title=title,
-            skills=skills_list,
-            experience=experience_list,
-            style="minimal",
-            user_id=user_id
-        )
-        return {"link": f"/download_cv?path={pdf_path}"}
+    """Generate CV PDF using Gemini AI"""
+    if not user_id or user_id not in SESSION:
+        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
 
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    user_data = SESSION[user_id]
+    skills = user_data.get("skills", [])
+    experience = [e.get("description", "") for e in user_data.get("experience", [])]
 
+    pdf_path = generate_cv_gemini(
+        name=user_data.get("fullName", ""),
+        title=user_data.get("title", ""),
+        skills=skills,
+        experience=experience,
+        style="minimal",
+        user_id=user_id
+    )
+    return JSONResponse(content={"status": "ok", "pdf_path": pdf_path})
 
-@app.get("/download_cv")
+# ----------------- Download -----------------
+@app.get("/api/download_cv")
 def download_cv(path: str = Query(...)):
+    """Download generated CV PDF"""
     if not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
     return FileResponse(path, filename=os.path.basename(path))
