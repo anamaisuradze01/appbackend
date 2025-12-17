@@ -1,7 +1,9 @@
 import os
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, Body
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,6 +31,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ----------------- Pydantic Models -----------------
+class ExperienceData(BaseModel):
+    title: str = ""
+    company: str = ""
+    years: str = ""
+    description: str = ""
+
+class RegenerateRequest(BaseModel):
+    user_id: str
+    field: str
+    index: Optional[int] = None
+    experience_data: Optional[ExperienceData] = None
+    current_data: Optional[Dict[str, Any]] = None
 
 # ----------------- Helper Functions -----------------
 def initialize_user_data(profile_result: dict) -> dict:
@@ -120,46 +136,75 @@ def clear_cv(user_id: str = Query(...)):
     return JSONResponse(content={"status": "cleared", "data": user_data})
 
 @app.post("/api/regenerate")
-def regenerate_field(
-    user_id: str = Query(...),
-    field: str = Query(...),
-    index: int = Query(None)
-):
-    """Regenerate AI content for summary, skills, or experience"""
+def regenerate_field(request: RegenerateRequest):
+    """
+    Regenerate AI content for summary, skills, or experience.
+    Now accepts experience_data in request body for experience regeneration.
+    """
+    user_id = request.user_id
+    field = request.field
+    index = request.index
+    
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
     
     user_data = SESSION[user_id]
+    
+    # If current_data is provided, use it to update session (keeps form data in sync)
+    if request.current_data:
+        user_data.update(request.current_data)
+        SESSION[user_id] = user_data
+    
     print(f"🔄 Regenerating {field} for user {user_id}")
 
     try:
         if field == "summary":
-            user_data["summary"] = generate_summary_with_ai(
+            regenerated_summary = generate_summary_with_ai(
                 name=user_data.get("fullName", ""),
                 title=user_data.get("title", "Professional"),
                 skills=user_data.get("skills", []),
                 experience=[e.get("description", "") for e in user_data.get("experience", [])],
                 style="minimal"
             )
-            print(f"✅ Generated summary: {user_data['summary'][:100]}...")
+            print(f"✅ Generated summary: {regenerated_summary[:100]}...")
+            
+            # Return only the regenerated field
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "summary",
+                "value": regenerated_summary
+            })
             
         elif field == "skills":
-            user_data["skills"] = generate_skills_with_ai(
+            regenerated_skills = generate_skills_with_ai(
                 skills=user_data.get("skills", []),
                 title=user_data.get("title", "Professional"),
                 experience=[e.get("description", "") for e in user_data.get("experience", [])]
             )
-            print(f"✅ Generated {len(user_data['skills'])} skills")
+            print(f"✅ Generated {len(regenerated_skills)} skills")
+            
+            # Return only the regenerated field
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "skills",
+                "value": regenerated_skills
+            })
             
         elif field == "experience":
             if index is None:
                 return JSONResponse(status_code=400, content={"error": "Experience index is required"})
             
-            if index >= len(user_data.get("experience", [])):
-                return JSONResponse(status_code=400, content={"error": f"Invalid experience index {index}"})
+            # Use provided experience_data if available, otherwise get from session
+            if request.experience_data:
+                exp_item = request.experience_data.dict()
+                print(f"📝 Using experience data from request: {exp_item.get('title', 'N/A')}")
+            else:
+                # Fallback to session data
+                if index >= len(user_data.get("experience", [])):
+                    return JSONResponse(status_code=400, content={"error": f"Invalid experience index {index}"})
+                exp_item = user_data["experience"][index]
             
-            exp_item = user_data["experience"][index]
-            exp_item["description"] = generate_experience_description_with_ai(
+            regenerated_description = generate_experience_description_with_ai(
                 title=exp_item.get("title", ""),
                 company=exp_item.get("company", ""),
                 years=exp_item.get("years", ""),
@@ -167,14 +212,21 @@ def regenerate_field(
             )
             print(f"✅ Generated experience description for {exp_item.get('title', 'position')}")
             
+            # Return only the regenerated field with index
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "experience",
+                "index": index,
+                "value": regenerated_description
+            })
+            
         else:
             return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
-
-        SESSION[user_id] = user_data
-        return JSONResponse(content={"status": "ok", "data": user_data})
         
     except Exception as e:
         print(f"❌ Error regenerating {field}: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"Failed to regenerate {field}: {str(e)}"})
 
 # ----------------- Generate CV PDF -----------------
