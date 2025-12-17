@@ -48,13 +48,17 @@ class RegenerateRequest(BaseModel):
 
 # ----------------- Helper Functions -----------------
 def initialize_user_data(profile_result: dict) -> dict:
+    """Initialize user data structure with profile and empty CV fields"""
     return {
+        # LinkedIn profile data
         "name": profile_result.get("name", ""),
         "firstName": profile_result.get("firstName", ""),
         "lastName": profile_result.get("lastName", ""),
         "email": profile_result.get("email", ""),
         "id": profile_result.get("id", ""),
         "picture": profile_result.get("picture", ""),
+
+        # CV data structure
         "fullName": profile_result.get("name", ""),
         "title": "",
         "phone": "",
@@ -126,16 +130,17 @@ def regenerate_field(request: RegenerateRequest):
     user_id = request.user_id
     field = request.field
     index = request.index
-    
+
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-    
+
     user_data = SESSION[user_id]
-    
+
+    # Sync current data from frontend
     if request.current_data:
         user_data.update(request.current_data)
         SESSION[user_id] = user_data
-    
+
     try:
         if field == "summary":
             regenerated_summary = generate_summary_with_ai(
@@ -150,15 +155,19 @@ def regenerate_field(request: RegenerateRequest):
                 "field": "summary",
                 "value": regenerated_summary
             })
-        
+
         elif field == "skills":
-            regenerated_skills = generate_skills_with_ai(title=user_data.get("title", "Professional"))
+            current_experience = [e.get("description", "") for e in user_data.get("experience", [])]
+            regenerated_skills = generate_skills_with_ai(
+                title=user_data.get("title", "Professional"),
+                experience=current_experience
+            )
             return JSONResponse(content={
                 "status": "ok",
                 "field": "skills",
                 "value": regenerated_skills
             })
-        
+
         elif field == "experience":
             if index is None:
                 return JSONResponse(status_code=400, content={"error": "Experience index is required"})
@@ -169,7 +178,7 @@ def regenerate_field(request: RegenerateRequest):
                 if index >= len(user_data.get("experience", [])):
                     return JSONResponse(status_code=400, content={"error": f"Invalid experience index {index}"})
                 exp_item = user_data["experience"][index]
-            
+
             regenerated_description = generate_experience_description_with_ai(
                 title=exp_item.get("title", ""),
                 company=exp_item.get("company", ""),
@@ -182,10 +191,10 @@ def regenerate_field(request: RegenerateRequest):
                 "index": index,
                 "value": regenerated_description
             })
-        
+
         else:
             return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -196,15 +205,15 @@ def regenerate_field(request: RegenerateRequest):
 def generate_cv(user_id: str = Query(...)):
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-
-    user_data = SESSION[user_id]
     
+    user_data = SESSION[user_id]
     if not user_data.get("fullName") or not user_data.get("title"):
         return JSONResponse(status_code=400, content={"error": "Full name and title are required"})
-    
+
     try:
         skills = user_data.get("skills", [])
         experience = [e.get("description", "") for e in user_data.get("experience", [])]
+
         pdf_path = generate_cv_gemini(
             name=user_data.get("fullName", ""),
             title=user_data.get("title", ""),
@@ -214,6 +223,7 @@ def generate_cv(user_id: str = Query(...)):
             user_id=user_id
         )
         return JSONResponse(content={"status": "ok", "pdf_path": pdf_path})
+
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to generate CV: {str(e)}"})
 
