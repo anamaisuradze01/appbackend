@@ -2,9 +2,9 @@ import os
 import re
 import time
 from typing import List
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor
 from google import genai
@@ -17,32 +17,34 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ----------------- Fallback summary -----------------
 def generate_fallback_summary(title: str, skills: List[str], experience: List[str]) -> str:
-    skills_str = ", ".join(skills[:3]) if skills else "relevant skills"
-    exp_text = " ".join(experience[:2]) if experience else "experience in relevant roles"
-    return f"A {title} with expertise in {skills_str}. Demonstrated achievements include {exp_text}. Proven ability to deliver results and contribute effectively to projects."
+    skills_str = ", ".join(skills[:3]) if skills else "technical skills"
+    exp_text = " • ".join(experience[:2]) if experience else ""
+    summary = f"As a {title}, skilled in {skills_str}."
+    if exp_text:
+        summary += f" Notable experience includes: {exp_text}."
+    summary += " Demonstrates proven ability to deliver impactful results in professional settings."
+    return summary
 
-# ----------------- Skills generation -----------------
+# ----------------- Skill generation -----------------
 def generate_skills_with_ai(title: str, experience: List[str] = None) -> List[str]:
-    """Generate professional skills based on title and optional experience."""
     if not client:
         return ["Communication", "Problem Solving", "Team Collaboration"]
-
+    
     exp_summary = ', '.join(experience[:3]) if experience else 'None'
 
-    prompt = f"""You are an expert CV writer.
-Generate a list of 8-12 professional skills for someone with the job title: {title}.
-Experience context: {exp_summary}
+    prompt = f"""Generate 8-12 relevant professional skills for a {title}.
+Experience summary: {exp_summary}
 Instructions:
+- Return ONLY a comma-separated list of skills
 - Include both technical and soft skills
-- Make them specific and relevant to the title
-- Do NOT return numbers or explanations, only a comma-separated list of skills
-- Skills should be actionable and reflect actual competencies"""
+- Make them specific and relevant to {title}
+- Do not include explanations or numbering."""
 
     try:
         response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
         if response and response.text:
-            skills_generated = [s.strip() for s in response.text.strip().split(",") if s.strip()]
-            return skills_generated if skills_generated else []
+            skills = [s.strip() for s in response.text.strip().split(",") if s.strip()]
+            return skills if skills else []
         return []
     except Exception as e:
         print(f"⚠️ Gemini API error (skills): {e}")
@@ -50,50 +52,47 @@ Instructions:
 
 # ----------------- Experience description -----------------
 def generate_experience_description_with_ai(title: str, company: str, years: str, description: str = "") -> str:
-    """Generate detailed experience description, respecting user input if provided."""
     if not client:
         return description or "Responsible for key duties and achievements in this role."
 
-    prompt = f"""You are a professional CV writer.
-Generate a 2-3 sentence experience description for the following role:
+    prompt = f"""Write a professional CV experience description:
 Job Title: {title}
 Company: {company}
 Years: {years}
-Current description (user-provided): {description or 'None'}
+Current description: {description or 'None'}
 Instructions:
-- Use the user-provided description as a base if available
-- Highlight achievements, responsibilities, and impact
-- Quantify results when possible
-- Use professional tone, past tense
-- Do NOT include markdown or headings
-- Return only the description text"""
+- Write 2-3 sentences describing responsibilities and achievements
+- Use action verbs and quantify results when possible
+- Professional tone, past tense
+- No markdown, return only text"""
 
     try:
         response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
-        return response.text.strip() if response and response.text else (description or "Responsible for key duties and achievements in this role.")
+        return response.text.strip() if response and response.text else description
     except Exception as e:
         print(f"⚠️ Gemini API error (experience): {e}")
         return description or "Responsible for key duties and achievements in this role."
 
 # ----------------- Summary generation -----------------
 def generate_summary_with_ai(title: str, skills: List[str], experience: List[str], style: str = "minimal") -> str:
-    """Generate a professional summary focused on achievements and skills."""
     if not client:
         return generate_fallback_summary(title, skills, experience)
 
-    prompt = f"""You are an expert CV writer.
-Generate a 3-4 sentence professional summary for someone with the job title: {title}.
-Key Skills: {', '.join(skills[:5]) if skills else 'None'}
-Experience Highlights: {', '.join(experience[:3]) if experience else 'None'}
-Writing Style: {style}
+    exp_summary = ', '.join(experience[:3]) if experience else "None"
+    skills_summary = ', '.join(skills[:5]) if skills else "None"
+
+    prompt = f"""You are a senior CV writer.
+Generate a concise, high-quality professional summary tailored to the job title.
+Input:
+Target Job Title: {title}
+Key Skills: {skills_summary}
+Relevant Experience: {exp_summary}
 Instructions:
-- Integrate key skills naturally
-- Highlight actual achievements or responsibilities
-- Use experience highlights provided by the user if available
-- Do NOT mention the user's name
-- Avoid vague phrases and do NOT count experiences
+- 3-4 sentences
+- Include action verbs, achievements, and context from user experience
 - Confident, professional tone
-- Return only the summary text"""
+- Do not include placeholders like '0 positions'
+- Return only text"""
 
     try:
         response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
@@ -103,8 +102,7 @@ Instructions:
         return generate_fallback_summary(title, skills, experience)
 
 # ----------------- CV PDF generation -----------------
-def generate_cv_gemini(title: str, skills: List[str], experience: List[str], style: str = "minimal", user_id: str = "default") -> str:
-    """Generate a CV PDF with AI-enhanced summary, skills, and experience."""
+def generate_cv_gemini(name: str, title: str, skills: List[str], experience: List[str], style: str = "minimal", user_id: str = "default") -> str:
     summary_text = generate_summary_with_ai(title, skills, experience, style)
 
     safe_title = re.sub(r"[^\w\d-]", "_", title)[:50]
@@ -124,22 +122,19 @@ def generate_cv_gemini(title: str, skills: List[str], experience: List[str], sty
         heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=13, spaceAfter=6, spaceBefore=16, textColor=HexColor('#34495e'), fontName='Helvetica-Bold')
         normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=6, leading=14)
 
-        # Title section
+        story.append(Paragraph(name, title_style))
         story.append(Paragraph(title, subtitle_style))
         story.append(Spacer(1, 0.1*inch))
 
-        # Summary
         story.append(Paragraph("Professional Summary", heading_style))
         story.append(Paragraph(summary_text, normal_style))
         story.append(Spacer(1, 0.1*inch))
 
-        # Skills
         if skills:
             story.append(Paragraph("Skills", heading_style))
             story.append(Paragraph(" • ".join(skills), normal_style))
             story.append(Spacer(1, 0.1*inch))
 
-        # Experience
         if experience:
             story.append(Paragraph("Experience", heading_style))
             for exp_text in experience:
@@ -148,7 +143,6 @@ def generate_cv_gemini(title: str, skills: List[str], experience: List[str], sty
             story.append(Spacer(1, 0.1*inch))
 
         doc.build(story)
-        print(f"✅ CV generated successfully: {pdf_path}")
         return pdf_path
     except Exception as e:
         print(f"❌ Error generating PDF: {e}")
