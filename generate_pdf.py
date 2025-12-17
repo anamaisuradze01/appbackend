@@ -123,4 +123,28 @@ def generate_cv_gemini(name: str, title: str, skills: List[str], experience: Lis
         heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=13, spaceAfter=6, spaceBefore=16, textColor=HexColor('#34495e'), fontName='Helvetica-Bold')
         normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=6, leading=14)
 
-        story.append(Paragraph(name, title_styl_
+        story.append(Paragraph(name, title_style))
+        story.append(Paragraph(title, subtitle_style))
+        story.append(Spacer(1, 0.1*inch))
+
+        story.append(Paragraph("Professional Summary", heading_style))
+        story.append(Paragraph(summary_text, normal_style))
+        story.append(Spacer(1, 0.1*inch))
+
+        if skills:
+            story.append(Paragraph("Skills", heading_style))
+            story.append(Paragraph(" • ".join(skills), normal_style))
+            story.append(Spacer(1, 0.1*inch))
+
+        if experience:
+            story.append(Paragraph("Experience", heading_style))
+            for exp_text in experience:
+                if exp_text.strip():
+                    story.append(Paragraph(f"• {exp_text.strip()}", normal_style))
+            story.append(Spacer(1, 0.1*inch))
+
+        doc.build(story)
+        return pdf_path
+    except Exception as e:
+        print(f"❌ Error generating PDF: {e}")
+        raise
