@@ -48,7 +48,6 @@ class RegenerateRequest(BaseModel):
 
 # ----------------- Helper Functions -----------------
 def initialize_user_data(profile_result: dict) -> dict:
-    """Initialize user data structure with profile and empty CV fields"""
     return {
         "name": profile_result.get("name", ""),
         "firstName": profile_result.get("firstName", ""),
@@ -56,7 +55,6 @@ def initialize_user_data(profile_result: dict) -> dict:
         "email": profile_result.get("email", ""),
         "id": profile_result.get("id", ""),
         "picture": profile_result.get("picture", ""),
-
         "fullName": profile_result.get("name", ""),
         "title": "",
         "phone": "",
@@ -128,18 +126,16 @@ def regenerate_field(request: RegenerateRequest):
     user_id = request.user_id
     field = request.field
     index = request.index
-
+    
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-
+    
     user_data = SESSION[user_id]
-
-    # Update session with current form data to ensure AI sees latest inputs
+    
     if request.current_data:
-        print(f"🔹 Received current_data for regeneration ({field}): {request.current_data}")
         user_data.update(request.current_data)
         SESSION[user_id] = user_data
-
+    
     try:
         if field == "summary":
             regenerated_summary = generate_summary_with_ai(
@@ -149,39 +145,47 @@ def regenerate_field(request: RegenerateRequest):
                 experience=[e.get("description", "") for e in user_data.get("experience", [])],
                 style="minimal"
             )
-            return JSONResponse(content={"status": "ok", "field": "summary", "value": regenerated_summary})
-
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "summary",
+                "value": regenerated_summary
+            })
+        
         elif field == "skills":
-            regenerated_skills = generate_skills_with_ai(
-                skills=user_data.get("skills", []),
-                title=user_data.get("title", "Professional"),
-                experience=[e.get("description", "") for e in user_data.get("experience", [])]
-            )
-            return JSONResponse(content={"status": "ok", "field": "skills", "value": regenerated_skills})
-
+            regenerated_skills = generate_skills_with_ai(title=user_data.get("title", "Professional"))
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "skills",
+                "value": regenerated_skills
+            })
+        
         elif field == "experience":
             if index is None:
                 return JSONResponse(status_code=400, content={"error": "Experience index is required"})
-
-            # Use latest experience data from request if provided
+            
             if request.experience_data:
                 exp_item = request.experience_data.dict()
             else:
                 if index >= len(user_data.get("experience", [])):
                     return JSONResponse(status_code=400, content={"error": f"Invalid experience index {index}"})
                 exp_item = user_data["experience"][index]
-
+            
             regenerated_description = generate_experience_description_with_ai(
                 title=exp_item.get("title", ""),
                 company=exp_item.get("company", ""),
                 years=exp_item.get("years", ""),
                 description=exp_item.get("description", "")
             )
-            return JSONResponse(content={"status": "ok", "field": "experience", "index": index, "value": regenerated_description})
-
+            return JSONResponse(content={
+                "status": "ok",
+                "field": "experience",
+                "index": index,
+                "value": regenerated_description
+            })
+        
         else:
             return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
-
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -194,11 +198,13 @@ def generate_cv(user_id: str = Query(...)):
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
 
     user_data = SESSION[user_id]
-
-    skills = user_data.get("skills", [])
-    experience = [e.get("description", "") for e in user_data.get("experience", [])]
-
+    
+    if not user_data.get("fullName") or not user_data.get("title"):
+        return JSONResponse(status_code=400, content={"error": "Full name and title are required"})
+    
     try:
+        skills = user_data.get("skills", [])
+        experience = [e.get("description", "") for e in user_data.get("experience", [])]
         pdf_path = generate_cv_gemini(
             name=user_data.get("fullName", ""),
             title=user_data.get("title", ""),
