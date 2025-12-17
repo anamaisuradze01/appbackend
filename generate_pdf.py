@@ -13,41 +13,39 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ----------------- Gemini API -----------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ----------------- Fallback summary -----------------
-def generate_fallback_summary(title: str, skills: List[str], experience: List[str]) -> str:
-    skills_text = ", ".join(skills) if skills else "various relevant skills"
-    exp_text = ""
-    if experience:
-        if len(experience) == 1:
-            exp_text = f" I contributed to {experience[0]}."
-        else:
-            exp_text = " I worked on " + ", ".join(experience[:-1]) + f", and {experience[-1]}."
-    return f"As a {title}, I am skilled in {skills_text}.{exp_text} I have consistently delivered high-quality results and contributed positively to every project I have worked on."
+def generate_fallback_summary(name: str, title: str, skills: List[str], experience: List[str]) -> str:
+    skills_str = ", ".join(skills[:3]) if skills else "various relevant skills"
+    exp_count = len(experience) if experience else 0
+    return f"{name} is a {title} with expertise in {skills_str}. With experience across {exp_count} roles, brings a strong track record of delivering results."
 
 # ----------------- Skills generation -----------------
-def generate_skills_with_ai(title: str, experience: List[str] = None) -> List[str]:
+def generate_skills_with_ai(title: str, experience: list = None) -> list:
     if not client:
         return ["Communication", "Problem Solving", "Team Collaboration"]
 
     exp_summary = ', '.join(experience[:3]) if experience else 'None'
 
-    prompt = f"""Generate a list of 8-12 professional skills for a {title}.
+    prompt = f"""Generate a list of 8-12 relevant professional skills for a {title}.
 Experience summary: {exp_summary}
 Instructions:
 - Return ONLY a comma-separated list of skills
 - Include both technical and soft skills
 - Make them specific and relevant to {title}
-- Do not include explanations or numbering."""
+- Do not invent unrelated skills
+- No explanations, no numbering"""
 
     try:
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp', 
+            contents=prompt
+        )
         if response and response.text:
-            skills = [s.strip() for s in response.text.strip().split(",") if s.strip()]
-            return skills if skills else []
+            generated_skills = [s.strip() for s in response.text.strip().split(",") if s.strip()]
+            return generated_skills if generated_skills else []
         return []
     except Exception as e:
         print(f"⚠️ Gemini API error (skills): {e}")
@@ -56,9 +54,10 @@ Instructions:
 # ----------------- Experience description -----------------
 def generate_experience_description_with_ai(title: str, company: str, years: str, description: str = "") -> str:
     if not client:
-        return description or "Responsible for key duties and achievements in this role."
+        return description or f"Worked as {title} at {company}, performing key responsibilities."
 
-    prompt = f"""Write a professional, human-like CV experience description for:
+    prompt = f"""Write a professional CV experience description for:
+
 Job Title: {title}
 Company: {company}
 Years: {years}
@@ -66,55 +65,63 @@ Current description: {description or 'None provided'}
 
 Instructions:
 - Write 2-3 sentences describing responsibilities and achievements
-- Use action verbs and quantify results when possible
+- Use action verbs, quantify results if possible
 - Professional tone, past tense for completed roles
-- Return only the description text in one paragraph
-- Make it readable and human-like
-- Do not use bullet points"""
+- Do NOT copy the current description; rephrase and enrich
+- Return only the description text"""
 
     try:
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
-        return response.text.strip() if response and response.text else (description or "Responsible for key duties and achievements in this role.")
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        return response.text.strip() if response and response.text else (description or f"Worked as {title} at {company}.")
     except Exception as e:
         print(f"⚠️ Gemini API error (experience): {e}")
-        return description or "Responsible for key duties and achievements in this role."
+        return description or f"Worked as {title} at {company}."
 
 # ----------------- Summary generation -----------------
-def generate_summary_with_ai(title: str, skills: List[str], experience: List[str], style: str = "minimal") -> str:
+def generate_summary_with_ai(name: str, title: str, skills: List[str], experience: List[str], style: str = "minimal") -> str:
     if not client:
-        return generate_fallback_summary(title, skills, experience)
+        return generate_fallback_summary(name, title, skills, experience)
 
-    skills_summary = ', '.join(skills[:5]) if skills else "relevant skills"
-    experience_summary = '; '.join(experience[:5]) if experience else ""
+    prompt = f"""You are an expert CV writer and professional resume coach.
 
-    prompt = f"""
-You are an expert CV writer. Write a professional summary paragraph for a {title}.
-- Integrate the following skills naturally: {skills_summary}.
-- Analyze the following experiences and **write a narrative that explains what the candidate achieved, what they were responsible for, and the impact**, without copying the text verbatim: {experience_summary}.
-- If experience is limited, **infer realistic achievements and responsibilities based on the job title and skills**.
-- Produce 3–5 consecutive sentences that flow like a human wrote them.
-- Avoid bullet points, lists, counts, or repeating phrases.
-- Use a confident, professional, and personable tone.
-- Output only one continuous paragraph.
-"""
+Generate a **human-like, professional, handwritten-style summary** for a CV.
+The summary must:
+
+- Be 3-4 sentences long
+- Never copy any input experience descriptions
+- Rephrase, summarize, and add plausible achievements and responsibilities
+- Focus on the candidate's title, skills, and experience
+- Be written in consecutive sentences, readable, natural
+- Highlight contributions, results, and impact
+- Maintain a professional but personal tone
+
+Input data:
+Job Title: {title}
+Key Skills: {', '.join(skills[:10]) if skills else 'None'}
+Experience summaries: {', '.join(experience[:5]) if experience else 'None'}
+
+Return ONLY the summary text."""
 
     try:
-        response = client.models.generate_content(model='gemini-2.0-flash-exp', contents=prompt)
-        if response and response.text:
-            return response.text.strip()
-        return generate_fallback_summary(title, skills, experience)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        summary_text = response.text.strip() if response and response.text else ""
+        return summary_text if summary_text else generate_fallback_summary(name, title, skills, experience)
     except Exception as e:
         print(f"⚠️ Gemini API error (summary): {e}")
-        return generate_fallback_summary(title, skills, experience)
-
-
+        return generate_fallback_summary(name, title, skills, experience)
 
 # ----------------- CV PDF generation -----------------
 def generate_cv_gemini(name: str, title: str, skills: List[str], experience: List[str], style: str = "minimal", user_id: str = "default") -> str:
-    summary_text = generate_summary_with_ai(title, skills, experience, style)
+    summary_text = generate_summary_with_ai(name, title, skills, experience, style)
 
     safe_title = re.sub(r"[^\w\d-]", "_", title)[:50]
-    safe_user_id = re.sub(r"[^\w\d-]", "_", str(user_id))[:20]
+    safe_user_id = re.sub(r"[^\w\d-]", str(user_id))[:20]
     pdf_dir = os.path.join("/tmp", "pdfs") if os.path.exists("/tmp") else os.path.join(os.getcwd(), "pdfs")
     os.makedirs(pdf_dir, exist_ok=True)
     cv_id = f"cv_{safe_user_id}_{safe_title}_{int(time.time())}"
