@@ -85,16 +85,16 @@ def generate_summary_with_ai(title: str, skills: List[str], experience: List[str
         return generate_fallback_summary(title, skills, experience)
 
     skills_summary = ', '.join(skills[:5]) if skills else "relevant skills"
-    experience_summary = '; '.join(experience[:3]) if experience else ""
+    experience_summary = '; '.join(experience[:5]) if experience else ""
 
     prompt = f"""
-You are an expert CV writer. Write a **human-like professional summary paragraph** for a {title}.
+You are an expert CV writer. Write a professional summary paragraph for a {title}.
 - Integrate the following skills naturally: {skills_summary}.
-- Summarize and **rephrase the following experiences** without copying them verbatim: {experience_summary}.
-- Produce 3-5 consecutive sentences that flow like a human wrote them.
-- Emphasize achievements, responsibilities, and impact.
-- Avoid listing items, bullet points, or counts.
-- Use a confident, professional, yet personable tone.
+- Analyze the following experiences and **write a narrative that explains what the candidate achieved, what they were responsible for, and the impact**, without copying the text verbatim: {experience_summary}.
+- If experience is limited, **infer realistic achievements and responsibilities based on the job title and skills**.
+- Produce 3–5 consecutive sentences that flow like a human wrote them.
+- Avoid bullet points, lists, counts, or repeating phrases.
+- Use a confident, professional, and personable tone.
 - Output only one continuous paragraph.
 """
 
@@ -106,6 +106,7 @@ You are an expert CV writer. Write a **human-like professional summary paragraph
     except Exception as e:
         print(f"⚠️ Gemini API error (summary): {e}")
         return generate_fallback_summary(title, skills, experience)
+
 
 
 # ----------------- CV PDF generation -----------------
