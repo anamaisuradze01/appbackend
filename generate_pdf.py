@@ -171,20 +171,36 @@ def generate_summary_with_ai(
         print("⚠️ Gemini API not configured, using fallback summary")
         return generate_fallback_summary(name, title, skills, experience)
     
-    prompt = f"""You are an expert CV writer. Generate a concise professional summary.
+    prompt = f"""You are a senior CV writer and hiring manager.
 
+Generate a concise, high-quality professional summary tailored specifically to the target job.
+
+Input:
 Name: {name}
 Target Job Title: {title}
-Key Skills: {', '.join(skills[:5])}
-Experience: {', '.join(experience[:3])}
-Style: {style}
+Key Skills (use at least 3 explicitly): {', '.join(skills[:5])}
+Relevant Experience (derive achievements from these): {', '.join(experience[:3])}
+Writing Style: {style}
 
-Instructions:
-- Write 3-4 sentences only
-- Focus on key achievements and value proposition
-- Use professional tone
-- Do not include any markdown formatting
-- Return only the summary text"""
+Rules:
+
+Write exactly 3–4 sentences
+
+The summary MUST clearly match the Target Job Title
+
+Explicitly reference relevant skills and experience (do NOT be generic)
+
+If experience data is limited, infer realistic achievements based on the job title and skills
+
+Do NOT mention missing data, placeholders, or counts (e.g., “0 positions”)
+
+Avoid vague phrases like “various skills” or “strong background”
+
+Use a confident, professional tone
+
+Do NOT include markdown, bullet points, or headings
+
+Return ONLY the summary text"""
 
     try:
         response = client.models.generate_content(
