@@ -139,6 +139,7 @@ def regenerate_field(request: RegenerateRequest):
     try:
         if field == "summary":
             summary = generate_summary_with_ai(
+                name=user_data.get("fullName", ""),
                 title=user_data.get("title", ""),
                 skills=user_data.get("skills", []),
                 experience=[e.get("description", "") for e in user_data.get("experience", [])]
