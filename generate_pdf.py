@@ -1,293 +1,295 @@
 import os
-from fastapi import FastAPI, Request, Query, Body
-from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+import re
+import time
+from typing import List, Dict, Any
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.units import inch
+from reportlab.lib.colors import HexColor
+from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from linked_in_oauth import get_auth_url, get_access_token, get_linkedin_profile
-from generate_pdf import (
-    generate_cv_gemini,
-    generate_summary_with_ai,
-    generate_skills_with_ai,
-    generate_experience_description_with_ai
-)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-app = FastAPI()
-
-# ----------------- In-memory session -----------------
-SESSION = {}
-
-# ----------------- CORS -----------------
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-origins = [FRONTEND_URL]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ----------------- Pydantic Models -----------------
-class ExperienceData(BaseModel):
-    title: str = ""
-    company: str = ""
-    years: str = ""
-    description: str = ""
-
-class RegenerateRequest(BaseModel):
-    user_id: str
-    field: str
-    index: Optional[int] = None
-    experience_data: Optional[ExperienceData] = None
-    current_data: Optional[Dict[str, Any]] = None
-
-# ----------------- Helper Functions -----------------
-def initialize_user_data(profile_result: dict) -> dict:
-    """Initialize user data structure with profile and empty CV fields"""
-    return {
-        # LinkedIn profile data
-        "name": profile_result.get("name", ""),
-        "firstName": profile_result.get("firstName", ""),
-        "lastName": profile_result.get("lastName", ""),
-        "email": profile_result.get("email", ""),
-        "id": profile_result.get("id", ""),
-        "picture": profile_result.get("picture", ""),
-        
-        # CV data structure
-        "fullName": profile_result.get("name", ""),
-        "title": "",
-        "phone": "",
-        "location": "",
-        "summary": "",
-        "skills": [],
-        "experience": [],
-        "education": [],
-        "projects": [],
-        "languages": []
-    }
-
-# ----------------- OAuth -----------------
-@app.get("/login")
-def login():
-    return RedirectResponse(url=get_auth_url())
-
-@app.get("/oauth/callback")
-def callback(request: Request, code: str = None, error: str = None):
-    """Handle LinkedIn OAuth callback"""
-    frontend_url = FRONTEND_URL
-    if error:
-        return RedirectResponse(url=f"{frontend_url}?error={error}")
-    if not code:
-        return RedirectResponse(url=f"{frontend_url}?error=no_code")
-
-    token_result = get_access_token(code)
-    if "error" in token_result:
-        print(f"Token error: {token_result}")
-        return RedirectResponse(url=f"{frontend_url}?error=token_failed")
-
-    access_token = token_result.get("access_token")
-    profile_result = get_linkedin_profile(access_token)
-    if "error" in profile_result:
-        print(f"Profile error: {profile_result}")
-        return RedirectResponse(url=f"{frontend_url}?error=profile_failed")
-
-    user_id = profile_result.get("id", "default")
-    SESSION[user_id] = initialize_user_data(profile_result)
+# ----------------- Fallback summary -----------------
+def generate_fallback_summary(title: str, skills: List[str], experience_list: List[Dict]) -> str:
+    """Generate a basic summary without AI"""
+    skills_str = ", ".join(skills[:5]) if skills else "relevant professional skills"
+    exp_count = len([e for e in experience_list if e.get('description')]) if experience_list else 0
     
-    print(f"✅ User {user_id} logged in successfully")
-    return RedirectResponse(url=f"{frontend_url}/cv-editor?user_id={user_id}")
+    if exp_count > 0:
+        return f"Experienced {title} with expertise in {skills_str}. Proven track record across {exp_count} professional roles, delivering consistent results and driving success."
+    else:
+        return f"{title} with strong foundation in {skills_str}. Committed to delivering high-quality results and continuous professional growth."
 
-@app.get("/api/profile")
-def get_profile(user_id: str = Query(None)):
-    """Get LinkedIn profile data as JSON"""
-    if not user_id or user_id not in SESSION:
-        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-    return JSONResponse(content=SESSION[user_id])
-
-# ----------------- CV Endpoints -----------------
-@app.post("/api/clear")
-def clear_cv(user_id: str = Query(...)):
-    """Clear all CV fields for the given user"""
-    if not user_id or user_id not in SESSION:
-        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-    
-    # Keep LinkedIn profile data but clear CV fields
-    user_data = SESSION[user_id]
-    user_data.update({
-        "fullName": user_data.get("name", ""),  # Keep name from profile
-        "title": "",
-        "phone": "",
-        "location": "",
-        "summary": "",
-        "skills": [],
-        "experience": [],
-        "education": [],
-        "projects": [],
-        "languages": []
-    })
-    
-    SESSION[user_id] = user_data
-    print(f"✅ Cleared CV data for user {user_id}")
-    return JSONResponse(content={"status": "cleared", "data": user_data})
-
-@app.post("/api/regenerate")
-def regenerate_field(request: RegenerateRequest):
+# ----------------- Summary generation -----------------
+def generate_summary_with_ai(
+    name: str,
+    title: str,
+    skills: List[str],
+    experience: List[str],
+    style: str = "minimal",
+    experience_list: List[Dict] = None,
+    education_list: List[Dict] = None,
+    projects_list: List[Dict] = None
+) -> str:
     """
-    Regenerate AI content for summary, skills, or experience.
-    Now accepts experience_data in request body for experience regeneration.
+    Generate a professional CV summary using Gemini AI.
+    Does NOT include the person's name in the summary.
     """
-    user_id = request.user_id
-    field = request.field
-    index = request.index
+    if not client:
+        print("⚠️ Gemini API not configured, using fallback")
+        return generate_fallback_summary(title, skills, experience_list or [])
     
-    if not user_id or user_id not in SESSION:
-        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
+    # Build comprehensive context
+    experience_details = []
+    if experience_list:
+        for exp in experience_list:
+            if exp.get('title') or exp.get('company'):
+                exp_str = f"{exp.get('title', 'Role')} at {exp.get('company', 'Company')} ({exp.get('years', 'dates')})"
+                if exp.get('description'):
+                    exp_str += f": {exp.get('description')[:200]}"
+                experience_details.append(exp_str)
     
-    user_data = SESSION[user_id]
+    education_details = []
+    if education_list:
+        for edu in education_list:
+            if edu.get('degree') or edu.get('school'):
+                education_details.append(f"{edu.get('degree', 'Degree')} from {edu.get('school', 'Institution')} ({edu.get('years', 'dates')})")
     
-    # If current_data is provided, use it to update session (keeps form data in sync)
-    if request.current_data:
-        user_data.update(request.current_data)
-        SESSION[user_id] = user_data
+    projects_details = []
+    if projects_list:
+        for proj in projects_list:
+            if proj.get('name'):
+                proj_str = f"{proj.get('name')}"
+                if proj.get('description'):
+                    proj_str += f": {proj.get('description')[:150]}"
+                projects_details.append(proj_str)
     
-    print(f"🔄 Regenerating {field} for user {user_id}")
+    prompt = f"""You are an expert CV writer. Write a compelling professional summary for a CV.
+
+CRITICAL RULES:
+1. DO NOT include the person's name in the summary
+2. Start with their current/target role and years of experience
+3. Naturally weave in their skills with context (not just listing them)
+4. Include specific achievements from their experience
+5. Use quantified results when possible
+6. Write 3-5 sentences in a natural, flowing style
+7. Make it sound human-written, not robotic
+8. Focus on value proposition and impact
+
+TARGET ROLE: {title}
+
+SKILLS: {', '.join(skills) if skills else 'Not provided'}
+
+EXPERIENCE:
+{chr(10).join(experience_details) if experience_details else 'No detailed experience provided'}
+
+EDUCATION:
+{chr(10).join(education_details) if education_details else 'Not provided'}
+
+PROJECTS:
+{chr(10).join(projects_details) if projects_details else 'Not provided'}
+
+Write a professional summary that:
+- Highlights their expertise in the target role
+- Integrates skills naturally (e.g., "leveraging Python and SQL to optimize...", not "skills: Python, SQL")
+- References specific accomplishments from their experience
+- Includes education/projects if relevant and impressive
+- Uses action-oriented language
+- Sounds confident but not arrogant
+
+Return ONLY the summary text, no formatting, no preamble."""
 
     try:
-        if field == "summary":
-            regenerated_summary = generate_summary_with_ai(
-                name=user_data.get("fullName", ""),
-                title=user_data.get("title", "Professional"),
-                skills=user_data.get("skills", []),
-                experience=[e.get("description", "") for e in user_data.get("experience", [])],
-                style="minimal",
-                experience_list=user_data.get("experience", []),
-                education_list=user_data.get("education", []),
-                projects_list=user_data.get("projects", [])
-            )
-            print(f"✅ Generated summary: {regenerated_summary[:100]}...")
-            
-            # Return only the regenerated field
-            return JSONResponse(content={
-                "status": "ok",
-                "field": "summary",
-                "value": regenerated_summary
-            })
-            
-        elif field == "skills":
-            regenerated_skills = generate_skills_with_ai(
-                skills=user_data.get("skills", []),
-                title=user_data.get("title", "Professional"),
-                experience=[e.get("description", "") for e in user_data.get("experience", [])]
-            )
-            print(f"✅ Generated {len(regenerated_skills)} skills")
-            
-            # Return only the regenerated field
-            return JSONResponse(content={
-                "status": "ok",
-                "field": "skills",
-                "value": regenerated_skills
-            })
-            
-        elif field == "experience":
-            if index is None:
-                return JSONResponse(status_code=400, content={"error": "Experience index is required"})
-            
-            # Use provided experience_data if available, otherwise get from session
-            if request.experience_data:
-                exp_item = request.experience_data.dict()
-                print(f"📝 Using experience data from request: {exp_item.get('title', 'N/A')}")
-            else:
-                # Fallback to session data
-                if index >= len(user_data.get("experience", [])):
-                    return JSONResponse(status_code=400, content={"error": f"Invalid experience index {index}"})
-                exp_item = user_data["experience"][index]
-            
-            regenerated_description = generate_experience_description_with_ai(
-                title=exp_item.get("title", ""),
-                company=exp_item.get("company", ""),
-                years=exp_item.get("years", ""),
-                description=exp_item.get("description", "")
-            )
-            print(f"✅ Generated experience description for {exp_item.get('title', 'position')}")
-            
-            # Return only the regenerated field with index
-            return JSONResponse(content={
-                "status": "ok",
-                "field": "experience",
-                "index": index,
-                "value": regenerated_description
-            })
-            
-        else:
-            return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
-        
-    except Exception as e:
-        print(f"❌ Error regenerating {field}: {e}")
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": f"Failed to regenerate {field}: {str(e)}"})
-
-# ----------------- Generate CV PDF -----------------
-@app.post("/api/generate_cv")
-def generate_cv(user_id: str = Query(...)):
-    """Generate CV PDF using Gemini AI (Tailored to Title)"""
-    if not user_id or user_id not in SESSION:
-        return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
-
-    user_data = SESSION[user_id]
-    
-    # Validate required fields
-    if not user_data.get("fullName"):
-        return JSONResponse(status_code=400, content={"error": "Full name is required"})
-    
-    if not user_data.get("title"):
-        return JSONResponse(status_code=400, content={"error": "Professional title is required"})
-    
-    try:
-        skills = user_data.get("skills", [])
-        experience = [e.get("description", "") for e in user_data.get("experience", [])]
-
-        pdf_path = generate_cv_gemini(
-            name=user_data.get("fullName", ""),
-            title=user_data.get("title", ""),
-            skills=skills,
-            experience=experience,
-            style="minimal",
-            user_id=user_id
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
         )
         
-        print(f"✅ CV generated for user {user_id}: {pdf_path}")
-        return JSONResponse(content={"status": "ok", "pdf_path": pdf_path})
+        if response and response.text:
+            summary = response.text.strip()
+            # Remove any markdown formatting
+            summary = summary.replace('**', '').replace('*', '')
+            # Remove any quotes
+            summary = summary.strip('"').strip("'")
+            
+            # Safety check: remove name if AI included it
+            if name and name in summary:
+                summary = summary.replace(name, "").strip()
+                # Clean up any double spaces or punctuation issues
+                summary = ' '.join(summary.split())
+            
+            return summary if summary else generate_fallback_summary(title, skills, experience_list or [])
+        
+        return generate_fallback_summary(title, skills, experience_list or [])
         
     except Exception as e:
-        print(f"❌ Error generating CV: {e}")
-        return JSONResponse(status_code=500, content={"error": f"Failed to generate CV: {str(e)}"})
+        print(f"⚠️ Gemini API error (summary): {e}")
+        return generate_fallback_summary(title, skills, experience_list or [])
 
-# ----------------- Download CV -----------------
-@app.get("/api/download_cv")
-def download_cv(path: str = Query(...)):
-    """Download generated CV PDF"""
-    if not os.path.exists(path):
-        return JSONResponse(status_code=404, content={"error": "File not found"})
-    return FileResponse(path, filename=os.path.basename(path), media_type="application/pdf")
 
-# ----------------- Health Check -----------------
-@app.get("/")
-def root():
-    """Health check endpoint"""
-    gemini_status = "configured" if os.getenv("GEMINI_API_KEY") else "not configured"
-    return {
-        "status": "running",
-        "gemini_api": gemini_status,
-        "frontend_url": FRONTEND_URL
-    }
+# ----------------- Skills generation -----------------
+def generate_skills_with_ai(skills: List[str], title: str, experience: List[str]) -> List[str]:
+    """Generate an enhanced skills list using Gemini AI"""
+    if not client:
+        return skills if skills else ["Communication", "Problem Solving", "Team Collaboration"]
+    
+    current_skills = ', '.join(skills) if skills else 'None'
+    exp_summary = '. '.join(experience[:3]) if experience else 'None'
+    
+    prompt = f"""Generate 10-15 relevant professional skills for a {title} position.
 
-@app.get("/health")
-def health():
-    """Health check for monitoring"""
-    return {"status": "healthy"}
+Current skills: {current_skills}
+Experience context: {exp_summary}
+
+Instructions:
+- Include technical skills relevant to {title}
+- Include important soft skills (leadership, communication, etc.)
+- Mix specific technologies with broader competencies
+- Make them specific and valuable
+- Return ONLY a comma-separated list
+- No explanations, no numbering, no quotes
+- Example format: Python, Project Management, Data Analysis, Team Leadership
+
+Generate the skills list now:"""
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        if response and response.text:
+            text = response.text.strip().replace('**', '').replace('*', '')
+            generated_skills = [s.strip() for s in text.split(",") if s.strip()]
+            return generated_skills if generated_skills else (skills or [])
+        return skills or []
+    except Exception as e:
+        print(f"⚠️ Gemini API error (skills): {e}")
+        return skills or []
+
+
+# ----------------- Experience description -----------------
+def generate_experience_description_with_ai(title: str, company: str, years: str, description: str = "") -> str:
+    """Generate professional experience description using Gemini AI"""
+    if not client:
+        return description or f"Responsible for key duties as {title} at {company}."
+
+    prompt = f"""Write a professional CV experience description.
+
+Position: {title}
+Company: {company}
+Duration: {years}
+Current description: {description or 'None - please write from scratch'}
+
+Instructions:
+- Write 2-4 sentences describing key responsibilities and achievements
+- Use strong action verbs (Led, Developed, Implemented, Managed, etc.)
+- Include quantifiable results when possible (e.g., "increased efficiency by 25%", "managed team of 10")
+- Focus on impact and value delivered
+- Use past tense for completed roles, present tense for current roles
+- Sound professional but natural
+- DO NOT copy the current description word-for-word; enhance and improve it
+
+Return ONLY the description, no formatting:"""
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        if response and response.text:
+            desc = response.text.strip().replace('**', '').replace('*', '')
+            desc = desc.strip('"').strip("'")
+            return desc if desc else (description or f"Worked as {title} at {company}, contributing to key initiatives.")
+        return description or f"Worked as {title} at {company}."
+    except Exception as e:
+        print(f"⚠️ Gemini API error (experience): {e}")
+        return description or f"Worked as {title} at {company}."
+
+
+# ----------------- CV PDF generation -----------------
+def generate_cv_gemini(
+    name: str,
+    title: str,
+    skills: List[str],
+    experience: List[str],
+    style: str = "minimal",
+    user_id: str = "default",
+    full_data: Dict[str, Any] = None
+) -> str:
+    """Generate CV PDF with AI-enhanced content"""
+    
+    # Extract structured data if provided
+    experience_list = []
+    education_list = []
+    projects_list = []
+    
+    if full_data:
+        experience_list = full_data.get('experience', [])
+        education_list = full_data.get('education', [])
+        projects_list = full_data.get('projects', [])
+    
+    # Generate enhanced summary
+    summary_text = generate_summary_with_ai(
+        name=name,
+        title=title,
+        skills=skills,
+        experience=experience,
+        style=style,
+        experience_list=experience_list,
+        education_list=education_list,
+        projects_list=projects_list
+    )
+
+    safe_title = re.sub(r"[^\w\d-]", "_", title)[:50]
+    safe_user_id = re.sub(r"[^\w\d-]", "_", str(user_id))[:20]
+    pdf_dir = os.path.join("/tmp", "pdfs") if os.path.exists("/tmp") else os.path.join(os.getcwd(), "pdfs")
+    os.makedirs(pdf_dir, exist_ok=True)
+    cv_id = f"cv_{safe_user_id}_{safe_title}_{int(time.time())}"
+    pdf_path = os.path.join(pdf_dir, f"{cv_id}.pdf")
+
+    try:
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, spaceAfter=6, textColor=HexColor('#2c3e50'), fontName='Helvetica-Bold')
+        subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Heading2'], fontSize=14, spaceAfter=12, textColor=HexColor('#7f8c8d'), fontName='Helvetica')
+        heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=13, spaceAfter=6, spaceBefore=16, textColor=HexColor('#34495e'), fontName='Helvetica-Bold')
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, spaceAfter=6, leading=14)
+
+        story.append(Paragraph(name, title_style))
+        story.append(Paragraph(title, subtitle_style))
+        story.append(Spacer(1, 0.1*inch))
+
+        # Summary
+        story.append(Paragraph("Professional Summary", heading_style))
+        story.append(Paragraph(summary_text, normal_style))
+        story.append(Spacer(1, 0.1*inch))
+
+        # Skills
+        if skills:
+            story.append(Paragraph("Skills", heading_style))
+            story.append(Paragraph(" • ".join(skills), normal_style))
+            story.append(Spacer(1, 0.1*inch))
+
+        # Experience
+        if experience:
+            story.append(Paragraph("Experience", heading_style))
+            for exp_text in experience:
+                if exp_text.strip():
+                    story.append(Paragraph(f"• {exp_text.strip()}", normal_style))
+            story.append(Spacer(1, 0.1*inch))
+
+        doc.build(story)
+        print(f"✅ CV generated: {pdf_path}")
+        return pdf_path
+    except Exception as e:
+        print(f"❌ Error generating PDF: {e}")
+        raise
