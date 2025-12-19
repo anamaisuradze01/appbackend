@@ -77,9 +77,9 @@ CRITICAL RULES:
 1. DO NOT include the person's name in the summary
 2. Start with their current/target role and years of experience
 3. Naturally weave in their skills with context (not just listing them)
-4. Include specific achievements from their experience
+4. Include the details from their experience
 5. Use quantified results when possible
-6. Write 3-5 sentences in a natural, flowing style
+6. Write the appropriate amount of sentences in a natural, flowing style
 7. Make it sound human-written, not robotic
 8. Focus on value proposition and impact
 
