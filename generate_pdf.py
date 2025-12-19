@@ -81,40 +81,44 @@ Instructions:
         return description or f"Worked as {title} at {company}."
 
 # ----------------- Summary generation -----------------
+import json
+
 def generate_summary_with_ai(name: str, title: str, skills: List[str], experience: List[str], style: str = "minimal") -> str:
     if not client:
         return generate_fallback_summary(name, title, skills, experience)
 
-    prompt = f"""You are an expert CV writer and professional resume coach.
-
-Generate a **human-like, professional, handwritten-style summary** for a CV.
-The summary must:
-
-- Be 3-4 sentences long
-- Never copy any input experience descriptions
-- Rephrase, summarize, and add plausible achievements and responsibilities
-- Focus on the candidate's title, skills, and experience
-- Be written in consecutive sentences, readable, natural
-- Highlight contributions, results, and impact
-- Maintain a professional but personal tone
-
-Input data:
-Job Title: {title}
-Key Skills: {', '.join(skills[:10]) if skills else 'None'}
-Experience summaries: {', '.join(experience[:5]) if experience else 'None'}
-
-Return ONLY the summary text."""
+    # Structured JSON input for Gemini
+    json_input = {
+        "role": "CV Writer and Resume Coach",
+        "instructions": "Generate a human-like, professional, handwritten-style summary for a CV.",
+        "style": style,
+        "rules": [
+            "Never copy any input experience descriptions",
+            "Rephrase, summarize, and add plausible achievements and responsibilities",
+            "Focus on the candidate's title, skills, and experience",
+            "Write in consecutive sentences, readable and natural",
+            "Highlight contributions, results, and impact",
+            "Do not limit length; create a rich, detailed summary"
+        ],
+        "candidate": {
+            "name": name,
+            "job_title": title,
+            "key_skills": skills[:10] if skills else [],
+            "experience_summaries": experience[:5] if experience else []
+        }
+    }
 
     try:
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
-            contents=prompt
+            contents=json.dumps(json_input)  # send as JSON string
         )
         summary_text = response.text.strip() if response and response.text else ""
         return summary_text if summary_text else generate_fallback_summary(name, title, skills, experience)
     except Exception as e:
-        print(f"⚠️ Gemini API error (summary): {e}")
+        print(f"⚠️ Gemini API error (summary JSON): {e}")
         return generate_fallback_summary(name, title, skills, experience)
+
 
 # ----------------- CV PDF generation -----------------
 def generate_cv_gemini(name: str, title: str, skills: List[str], experience: List[str], style: str = "minimal", user_id: str = "default") -> str:
