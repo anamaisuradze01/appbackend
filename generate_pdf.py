@@ -18,14 +18,35 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ----------------- Fallback summary -----------------
 def generate_fallback_summary(title: str, skills: List[str], experience_list: List[Dict]) -> str:
-    """Generate a basic summary without AI"""
-    skills_str = ", ".join(skills[:5]) if skills else "relevant professional skills"
-    exp_count = len([e for e in experience_list if e.get('description')]) if experience_list else 0
+    """Generate a better-than-nothing summary when AI fails"""
     
-    if exp_count > 0:
-        return f"Experienced {title} with expertise in {skills_str}. Proven track record across {exp_count} professional roles, delivering consistent results and driving success."
+    # Count actual experience years if possible
+    years_exp = "Entry-level" if not experience_list else f"{len(experience_list)}+"
+    
+    # Get top skills
+    top_skills = ", ".join(skills[:4]) if skills else "various professional competencies"
+    
+    # Try to extract meaningful details from first experience
+    exp_detail = ""
+    if experience_list and len(experience_list) > 0:
+        first_exp = experience_list[0]
+        company = first_exp.get('company', '')
+        role = first_exp.get('title', '')
+        if company and role:
+            exp_detail = f" Previously served as {role} at {company}, gaining practical experience in software development and testing."
+    
+    if experience_list and len(experience_list) > 0:
+        return (
+            f"{title} with hands-on experience in {top_skills}. "
+            f"Demonstrated ability to deliver quality results across {len(experience_list)} professional role{'s' if len(experience_list) > 1 else ''}.{exp_detail} "
+            f"Committed to continuous learning and professional excellence in quality assurance and software testing."
+        )
     else:
-        return f"{title} with strong foundation in {skills_str}. Committed to delivering high-quality results and continuous professional growth."
+        return (
+            f"Motivated {title} with strong foundation in {top_skills}. "
+            f"Eager to apply technical skills and contribute to software quality initiatives. "
+            f"Quick learner with attention to detail and commitment to delivering high-quality results."
+        )
 
 # ----------------- Summary generation -----------------
 def generate_summary_with_ai(
@@ -122,6 +143,7 @@ Return ONLY the summary text, no formatting, no preamble."""
         if response and response.text:
             summary = response.text.strip()
             print(f"✅ AI generated summary ({len(summary)} chars)")
+            
             # Remove any markdown formatting
             summary = summary.replace('**', '').replace('*', '')
             # Remove any quotes
@@ -133,7 +155,21 @@ Return ONLY the summary text, no formatting, no preamble."""
                 # Clean up any double spaces or punctuation issues
                 summary = ' '.join(summary.split())
             
-            return summary if summary else generate_fallback_summary(title, skills, experience_list or [])
+            # Quality check - reject if too generic/short
+            generic_phrases = [
+                "strong foundation in",
+                "committed to delivering high-quality",
+                "continuous professional growth"
+            ]
+            is_generic = any(phrase in summary.lower() for phrase in generic_phrases)
+            is_too_short = len(summary) < 200  # Strong summaries should be at least 200 chars
+            
+            if is_generic or is_too_short:
+                print(f"⚠️ AI summary quality check failed (generic: {is_generic}, too short: {is_too_short})")
+                print(f"   Falling back to template")
+                return generate_fallback_summary(title, skills, experience_list or [])
+            
+            return summary
         else:
             print("⚠️ AI response was empty")
             return generate_fallback_summary(title, skills, experience_list or [])
