@@ -43,8 +43,10 @@ def generate_summary_with_ai(
     Does NOT include the person's name in the summary.
     """
     if not client:
-        print("⚠️ Gemini API not configured, using fallback")
+        print("❌ GEMINI CLIENT NOT INITIALIZED - Check GEMINI_API_KEY")
         return generate_fallback_summary(title, skills, experience_list or [])
+    
+    print(f"✅ Gemini client is active, generating summary...")
     
     # Build comprehensive context
     experience_details = []
@@ -107,6 +109,11 @@ Write a professional summary that:
 Return ONLY the summary text, no formatting, no preamble."""
 
     try:
+        print(f"📝 Generating summary with AI for: {title}")
+        print(f"   Skills: {len(skills)} provided")
+        print(f"   Experience: {len(experience_details)} entries")
+        print(f"   Education: {len(education_details)} entries")
+        
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
             contents=prompt
@@ -114,6 +121,7 @@ Return ONLY the summary text, no formatting, no preamble."""
         
         if response and response.text:
             summary = response.text.strip()
+            print(f"✅ AI generated summary ({len(summary)} chars)")
             # Remove any markdown formatting
             summary = summary.replace('**', '').replace('*', '')
             # Remove any quotes
@@ -126,11 +134,14 @@ Return ONLY the summary text, no formatting, no preamble."""
                 summary = ' '.join(summary.split())
             
             return summary if summary else generate_fallback_summary(title, skills, experience_list or [])
-        
-        return generate_fallback_summary(title, skills, experience_list or [])
+        else:
+            print("⚠️ AI response was empty")
+            return generate_fallback_summary(title, skills, experience_list or [])
         
     except Exception as e:
-        print(f"⚠️ Gemini API error (summary): {e}")
+        print(f"❌ Gemini API error (summary): {e}")
+        import traceback
+        traceback.print_exc()
         return generate_fallback_summary(title, skills, experience_list or [])
 
 
