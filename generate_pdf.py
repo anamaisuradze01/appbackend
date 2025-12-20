@@ -277,7 +277,7 @@ Now write a STRONG, detailed, professional description for this role. Make it sp
     try:
         print(f"📝 Generating experience description for {title} at {company}")
         response = client.models.generate_content(
-            model='gemini-2.5-proexp',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         if response and response.text:
