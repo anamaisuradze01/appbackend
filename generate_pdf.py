@@ -135,8 +135,9 @@ Return ONLY the summary text, no formatting, no preamble."""
         print(f"   Experience: {len(experience_details)} entries")
         print(f"   Education: {len(education_details)} entries")
         
+
         response = client.models.generate_content(
-            model='gemini-2.5-proexp',
+            model='gemini-2.0-flash', 
             contents=prompt
         )
         
@@ -207,8 +208,9 @@ Instructions:
 Generate the skills list now:"""
     
     try:
+
         response = client.models.generate_content(
-            model='gemini-2.5-proexp',
+            model='gemini-2.0-flash', # Use the stable Flash model for free tier
             contents=prompt
         )
         if response and response.text:
