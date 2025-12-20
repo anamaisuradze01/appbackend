@@ -136,7 +136,7 @@ Return ONLY the summary text, no formatting, no preamble."""
         print(f"   Education: {len(education_details)} entries")
         
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-2.5-proexp',
             contents=prompt
         )
         
@@ -208,7 +208,7 @@ Generate the skills list now:"""
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-2.5-proexp',
             contents=prompt
         )
         if response and response.text:
@@ -277,7 +277,7 @@ Now write a STRONG, detailed, professional description for this role. Make it sp
     try:
         print(f"📝 Generating experience description for {title} at {company}")
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-2.5-proexp',
             contents=prompt
         )
         if response and response.text:
