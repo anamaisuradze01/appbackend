@@ -15,6 +15,12 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if GEMINI_API_KEY:
+    print(f"✅ API Key found: {GEMINI_API_KEY[:10]}...{GEMINI_API_KEY[-4:]}")
+else:
+    print("❌ API Key NOT found in environment variables")
+    print("Make sure you have a .env file with GEMINI_API_KEY=your_key")
+    exit(1)
 
 # ----------------- Fallback summary -----------------
 def generate_fallback_summary(title: str, skills: List[str], experience_list: List[Dict]) -> str:
