@@ -15,12 +15,7 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-if GEMINI_API_KEY:
-    print(f"✅ API Key found: {GEMINI_API_KEY[:10]}...{GEMINI_API_KEY[-4:]}")
-else:
-    print("❌ API Key NOT found in environment variables")
-    print("Make sure you have a .env file with GEMINI_API_KEY=your_key")
-    exit(1)
+
 
 # ----------------- Fallback summary -----------------
 def generate_fallback_summary(title: str, skills: List[str], experience_list: List[Dict]) -> str:
@@ -64,16 +59,50 @@ def generate_summary_with_ai(
     experience_list: List[Dict] = None,
     education_list: List[Dict] = None,
     projects_list: List[Dict] = None
-) -> str:
+) -> Dict[str, Any]:
     """
     Generate a professional CV summary using Gemini AI.
-    Does NOT include the person's name in the summary.
+    Returns both the summary and debug information.
     """
-    if not client:
-        print("❌ GEMINI CLIENT NOT INITIALIZED - Check GEMINI_API_KEY")
-        return generate_fallback_summary(title, skills, experience_list or [])
     
-    print(f"✅ Gemini client is active, generating summary...")
+    # Initialize debug info that will be returned
+    debug_info = {
+        "api_key_loaded": bool(GEMINI_API_KEY),
+        "api_key_length": len(GEMINI_API_KEY) if GEMINI_API_KEY else 0,
+        "client_initialized": client is not None,
+        "model_used": "gemini-1.5-flash",
+        "summary": "",
+        "error": None,
+        "used_fallback": False,
+        "fallback_reason": None,
+        "response_length": 0,
+        "timestamp": time.time()
+    }
+    
+    # Print to server console
+    print("=" * 60)
+    print("🔍 GENERATE SUMMARY DEBUG")
+    print("=" * 60)
+    print(f"Title: {title}")
+    print(f"API Key Loaded: {'✅ Yes' if GEMINI_API_KEY else '❌ No'}")
+    print(f"Client Initialized: {'✅ Yes' if client else '❌ No'}")
+    print(f"Experience List: {len(experience_list) if experience_list else 0} items")
+    print(f"Education List: {len(education_list) if education_list else 0} items")
+    print(f"Projects List: {len(projects_list) if projects_list else 0} items")
+    print(f"Skills: {len(skills) if skills else 0} items")
+    print("=" * 60)
+    
+    if not client:
+        print("❌ GEMINI CLIENT NOT INITIALIZED")
+        debug_info["error"] = "Gemini client not initialized - check API key"
+        debug_info["used_fallback"] = True
+        debug_info["fallback_reason"] = "No API client"
+        fallback_summary = generate_fallback_summary(title, skills, experience_list or [])
+        debug_info["summary"] = fallback_summary
+        print(f"📝 Using fallback summary ({len(fallback_summary)} chars)")
+        return debug_info
+    
+    print("✅ Gemini client active, building prompt...")
     
     # Build comprehensive context
     experience_details = []
@@ -135,30 +164,67 @@ Write a professional summary that:
 
 Return ONLY the summary text, no formatting, no preamble."""
 
+    debug_info["prompt_length"] = len(prompt)
+    print(f"📤 Sending prompt to Gemini API ({len(prompt)} chars)...")
+
     try:
+        # Try gemini-1.5-flash first (most stable)
         response = client.models.generate_content(
-            model='gemini-2.0-flash', # Use a valid model name
+            model='gemini-1.5-flash',
             contents=prompt
         )
         
-        if response and response.text:
+        print("📥 Response received from Gemini")
+        
+        if response and hasattr(response, 'text') and response.text:
             summary = response.text.strip()
+            debug_info["summary"] = summary
+            debug_info["response_length"] = len(summary)
             
-            # Remove the "generic_phrases" check entirely for now to test
-            # Lower the character limit to 100 so it doesn't fail as easily
-            is_too_short = len(summary) < 100 
+            print(f"📝 AI Generated Summary:")
+            print("-" * 60)
+            print(summary)
+            print("-" * 60)
+            print(f"Length: {len(summary)} characters")
+            
+            # Quality check
+            is_too_short = len(summary) < 100
             
             if is_too_short:
-                print(f"⚠️ AI summary too short ({len(summary)} chars), using fallback")
-                return generate_fallback_summary(title, skills, experience_list or [])
+                print(f"⚠️ Summary too short ({len(summary)} chars < 100), using fallback")
+                debug_info["used_fallback"] = True
+                debug_info["fallback_reason"] = f"AI summary too short ({len(summary)} chars)"
+                fallback_summary = generate_fallback_summary(title, skills, experience_list or [])
+                debug_info["summary"] = fallback_summary
+                debug_info["ai_summary_rejected"] = summary
+                return debug_info
             
-            return summary
+            print("✅ Using AI-generated summary")
+            return debug_info
+            
+        else:
+            print("❌ No text in response")
+            print(f"Response type: {type(response)}")
+            print(f"Response attributes: {dir(response) if response else 'None'}")
+            debug_info["error"] = "No text in API response"
+            debug_info["used_fallback"] = True
+            debug_info["fallback_reason"] = "Empty response from API"
+            fallback_summary = generate_fallback_summary(title, skills, experience_list or [])
+            debug_info["summary"] = fallback_summary
+            return debug_info
+            
     except Exception as e:
-        print(f"❌ Gemini API error (summary): {e}")
+        print(f"❌ Gemini API Error: {e}")
         import traceback
         traceback.print_exc()
-        return generate_fallback_summary(title, skills, experience_list or [])
-
+        
+        debug_info["error"] = str(e)
+        debug_info["error_type"] = type(e).__name__
+        debug_info["used_fallback"] = True
+        debug_info["fallback_reason"] = f"API exception: {str(e)}"
+        fallback_summary = generate_fallback_summary(title, skills, experience_list or [])
+        debug_info["summary"] = fallback_summary
+        return debug_info
 
 # ----------------- Skills generation -----------------
 def generate_skills_with_ai(skills: List[str], title: str, experience: List[str]) -> List[str]:
