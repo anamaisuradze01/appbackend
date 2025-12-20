@@ -227,25 +227,55 @@ def generate_experience_description_with_ai(title: str, company: str, years: str
     if not client:
         return description or f"Responsible for key duties as {title} at {company}."
 
-    prompt = f"""Write a professional CV experience description.
+    # Determine if current or past role based on years
+    is_current = "present" in years.lower() or "current" in years.lower()
+    tense = "present" if is_current else "past"
 
-Position: {title}
+    prompt = f"""You are an expert resume writer. Write a professional, detailed experience description for a resume.
+
+POSITION DETAILS:
+Job Title: {title}
 Company: {company}
 Duration: {years}
-Current description: {description or 'None - please write from scratch'}
+Current Description: {description or 'None provided - write from scratch'}
 
-Instructions:
-- Write 2-4 sentences describing key responsibilities and achievements
-- Use strong action verbs (Led, Developed, Implemented, Managed, etc.)
-- Include quantifiable results when possible (e.g., "increased efficiency by 25%", "managed team of 10")
-- Focus on impact and value delivered
-- Use past tense for completed roles, present tense for current roles
-- Sound professional but natural
-- DO NOT copy the current description word-for-word; enhance and improve it
+CRITICAL REQUIREMENTS:
+1. Write 3-4 sentences (75-100 words)
+2. Use {'present tense' if is_current else 'past tense'} (role is {'current' if is_current else 'completed'})
+3. Start each sentence with strong action verbs:
+   - Past tense: Developed, Implemented, Led, Managed, Spearheaded, Optimized, Collaborated, Contributed
+   - Present tense: Develop, Implement, Lead, Manage, Design, Optimize, Collaborate, Contribute, Assist
+4. Include specific technical skills and tools when relevant
+5. Mention collaboration with teams (cross-functional, development, QA, etc.)
+6. Reference concrete deliverables (features, systems, processes)
+7. Include impact when possible (performance improvements, bug reduction, efficiency gains)
+8. Make it detailed and professional, not generic
+9. DO NOT use bullet points - write in paragraph form
+10. Sound confident and achievement-focused
 
-Return ONLY the description, no formatting:"""
+STRUCTURE:
+- Sentence 1: Main responsibility/what you built or maintained
+- Sentence 2: Collaboration and teamwork aspects
+- Sentence 3: Additional contributions (testing, code review, processes)
+- Sentence 4 (optional): Skills gained or impact delivered
+
+EXAMPLES OF STRONG DESCRIPTIONS:
+
+Past Role Example:
+"Developed and maintained backend components for the KIU website using Java, contributing to feature implementation and system improvements. Collaborated with senior developers and front-end teams to integrate APIs, resolve bugs, and enhance application performance. Assisted with database operations, code reviews, and unit testing, gaining hands-on experience in full-stack development and professional software engineering practices."
+
+Current Role Example:
+"Assist in designing, developing, and maintaining automated test scripts to validate web and application functionality. Work closely with software engineers and QA teams to identify defects, improve test coverage, and ensure reliable releases across development cycles. Contribute to test planning, execution, and reporting while gaining hands-on experience with modern testing tools, CI/CD workflows, and quality assurance best practices."
+
+DO NOT WRITE GENERIC DESCRIPTIONS LIKE:
+"Worked as {title} at {company}."
+"Responsible for various duties and tasks."
+"Performed daily responsibilities as needed."
+
+Now write a STRONG, detailed, professional description for this role. Make it specific and achievement-focused. Return ONLY the description paragraph, no formatting."""
     
     try:
+        print(f"📝 Generating experience description for {title} at {company}")
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
             contents=prompt
@@ -253,11 +283,24 @@ Return ONLY the description, no formatting:"""
         if response and response.text:
             desc = response.text.strip().replace('**', '').replace('*', '')
             desc = desc.strip('"').strip("'")
-            return desc if desc else (description or f"Worked as {title} at {company}, contributing to key initiatives.")
-        return description or f"Worked as {title} at {company}."
+            
+            # Quality check - reject if too short or generic
+            is_too_short = len(desc) < 150
+            is_generic = "worked as" in desc.lower() or "responsible for" in desc.lower() and len(desc) < 200
+            
+            if is_too_short or is_generic:
+                print(f"⚠️ Experience description quality check failed")
+                # Return enhanced version of original if available
+                if description and len(description) > 100:
+                    return description
+                return f"{'Contributed' if not is_current else 'Contributing'} as {title} at {company}, {'working' if is_current else 'worked'} on key initiatives and {'collaborating' if is_current else 'collaborated'} with cross-functional teams to deliver high-quality results."
+            
+            print(f"✅ Generated experience description ({len(desc)} chars)")
+            return desc
+        return description or f"{'Serving' if is_current else 'Served'} as {title} at {company}, contributing to key projects and initiatives."
     except Exception as e:
         print(f"⚠️ Gemini API error (experience): {e}")
-        return description or f"Worked as {title} at {company}."
+        return description or f"{'Working' if is_current else 'Worked'} as {title} at {company}, contributing to key initiatives."
 
 
 # ----------------- CV PDF generation -----------------
