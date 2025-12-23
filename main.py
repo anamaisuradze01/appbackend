@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,12 +39,38 @@ class ExperienceData(BaseModel):
     years: str = ""
     description: str = ""
 
+class EducationData(BaseModel):
+    school: str = ""
+    degree: str = ""
+    years: str = ""
+
+class ProjectData(BaseModel):
+    name: str = ""
+    description: str = ""
+
+class ProfileData(BaseModel):
+    fullName: str = ""
+    title: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    summary: str = ""
+    skills: List[str] = []
+    experience: List[ExperienceData] = []
+    education: List[EducationData] = []
+    projects: List[ProjectData] = []
+    languages: List[str] = []
+
 class RegenerateRequest(BaseModel):
     user_id: str
     field: str
     index: Optional[int] = None
     experience_data: Optional[ExperienceData] = None
     current_data: Optional[Dict[str, Any]] = None
+
+class GenerateCVRequest(BaseModel):
+    user_id: str
+    data: ProfileData
 
 # ----------------- Helper Functions -----------------
 def initialize_user_data(profile_result: dict) -> dict:
@@ -132,30 +158,55 @@ def regenerate_field(request: RegenerateRequest):
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
     
     user_data = SESSION[user_id]
+    
+    # Update session with current data from frontend
     if request.current_data:
-        user_data.update(request.current_data)
+        # Deep merge the current_data to preserve all fields
+        for key, value in request.current_data.items():
+            user_data[key] = value
         SESSION[user_id] = user_data
 
     try:
         if field == "summary":
+            # Extract experience list properly
+            experience_list = user_data.get("experience", [])
+            education_list = user_data.get("education", [])
+            projects_list = user_data.get("projects", [])
+            
             summary = generate_summary_with_ai(
                 name=user_data.get("fullName", ""),
                 title=user_data.get("title", ""),
                 skills=user_data.get("skills", []),
-                experience=[e.get("description", "") for e in user_data.get("experience", [])]
+                experience=[e.get("description", "") for e in experience_list],
+                experience_list=experience_list,
+                education_list=education_list,
+                projects_list=projects_list
             )
+            
+            # Update session with new summary
+            user_data["summary"] = summary
+            SESSION[user_id] = user_data
+            
             return JSONResponse(content={"status": "ok", "field": "summary", "value": summary})
 
         elif field == "skills":
             skills = generate_skills_with_ai(
                 title=user_data.get("title", ""),
-                experience=[e.get("description", "") for e in user_data.get("experience", [])]
+                experience=[e.get("description", "") for e in user_data.get("experience", [])],
+                current_skills=user_data.get("skills", [])
             )
+            
+            # Update session with new skills
+            user_data["skills"] = skills
+            SESSION[user_id] = user_data
+            
             return JSONResponse(content={"status": "ok", "field": "skills", "value": skills})
 
         elif field == "experience":
             if index is None:
                 return JSONResponse(status_code=400, content={"error": "Experience index is required"})
+            
+            # Get experience item from request or session
             if request.experience_data:
                 exp_item = request.experience_data.dict()
             else:
@@ -169,38 +220,68 @@ def regenerate_field(request: RegenerateRequest):
                 years=exp_item.get("years", ""),
                 description=exp_item.get("description", "")
             )
+            
+            # Update session with new description
+            if index < len(user_data.get("experience", [])):
+                user_data["experience"][index]["description"] = description
+                SESSION[user_id] = user_data
+            
             return JSONResponse(content={"status": "ok", "field": "experience", "index": index, "value": description})
 
         else:
             return JSONResponse(status_code=400, content={"error": f"Unknown field '{field}'"})
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"Failed to regenerate {field}: {str(e)}"})
 
 # ----------------- Generate CV PDF -----------------
 @app.post("/api/generate_cv")
-def generate_cv(user_id: str = Query(...)):
+def generate_cv(request: GenerateCVRequest):
+    user_id = request.user_id
+    data = request.data
+    
     if not user_id or user_id not in SESSION:
         return JSONResponse(status_code=400, content={"error": "Invalid or missing user_id"})
     
-    user_data = SESSION[user_id]
-    if not user_data.get("fullName") or not user_data.get("title"):
+    if not data.fullName or not data.title:
         return JSONResponse(status_code=400, content={"error": "Full name and Professional title are required"})
 
     try:
-        skills = user_data.get("skills", [])
-        experience = [e.get("description", "") for e in user_data.get("experience", [])]
+        # Convert Pydantic models to dicts for PDF generation
+        full_data = {
+            "fullName": data.fullName,
+            "title": data.title,
+            "email": data.email,
+            "phone": data.phone,
+            "location": data.location,
+            "summary": data.summary,
+            "skills": data.skills,
+            "experience": [exp.dict() for exp in data.experience],
+            "education": [edu.dict() for edu in data.education],
+            "projects": [proj.dict() for proj in data.projects],
+            "languages": data.languages
+        }
+        
+        # Update session with latest data
+        SESSION[user_id].update(full_data)
 
         pdf_path = generate_cv_gemini(
-            name=user_data.get("fullName", ""),
-            title=user_data.get("title", ""),
-            skills=skills,
-            experience=experience,
+            name=data.fullName,
+            title=data.title,
+            skills=data.skills,
+            experience=[e.description for e in data.experience],
             style="minimal",
-            user_id=user_id
+            user_id=user_id,
+            full_data=full_data
         )
+        
         return JSONResponse(content={"status": "ok", "pdf_path": pdf_path})
+        
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"Failed to generate CV: {str(e)}"})
 
 @app.get("/api/download_cv")
