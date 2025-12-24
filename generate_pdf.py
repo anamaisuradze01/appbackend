@@ -10,10 +10,19 @@ from reportlab.lib.colors import HexColor
 from google import genai
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
+# Get API key from environment
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+if not GEMINI_API_KEY:
+    print("❌ ERROR: GEMINI_API_KEY not found in environment!")
+    print("   Make sure your .env file has: GEMINI_API_KEY=your_actual_key_here")
+    client = None
+else:
+    print(f"✅ API Key found: {GEMINI_API_KEY[:10]}...{GEMINI_API_KEY[-4:]}")
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 # ----------------- Gemini response helper -----------------
@@ -51,7 +60,7 @@ def generate_fallback_summary(title: str, skills: List[str], experience_list: Li
 def generate_fallback_skills(title: str) -> List[str]:
     """Generate fallback skills based on job title"""
     common_skills = ["Problem Solving", "Team Collaboration", "Communication", "Time Management"]
-    
+
     # Add title-specific skills
     title_lower = title.lower()
     if any(word in title_lower for word in ["developer", "engineer", "programmer"]):
@@ -60,7 +69,7 @@ def generate_fallback_skills(title: str) -> List[str]:
         return ["Figma", "Adobe XD", "User Research", "Prototyping"] + common_skills
     elif any(word in title_lower for word in ["manager", "lead", "director"]):
         return ["Leadership", "Strategic Planning", "Budget Management", "Stakeholder Communication"]
-    
+
     return common_skills
 
 
@@ -68,7 +77,7 @@ def generate_fallback_experience_description(title: str, company: str, current_d
     """Generate fallback experience description"""
     if current_desc and len(current_desc) > 20:
         return current_desc
-    
+
     return (
         f"Contributed to key projects at {company} in the role of {title}. "
         f"Collaborated with cross-functional teams to deliver high-quality results. "
@@ -78,17 +87,17 @@ def generate_fallback_experience_description(title: str, company: str, current_d
 
 # ----------------- AI Summary Generation -----------------
 def generate_summary_with_ai(
-    name: str,
-    title: str,
-    skills: List[str],
-    experience: List[str],
-    style: str = "minimal",
-    experience_list: List[Dict] = None,
-    education_list: List[Dict] = None,
-    projects_list: List[Dict] = None
+        name: str,
+        title: str,
+        skills: List[str],
+        experience: List[str],
+        style: str = "minimal",
+        experience_list: List[Dict] = None,
+        education_list: List[Dict] = None,
+        projects_list: List[Dict] = None
 ) -> str:
     """Generate professional summary using AI"""
-    
+
     if not client:
         print("❌ Gemini client not initialized")
         return generate_fallback_summary(title, skills, experience_list or [])
@@ -165,12 +174,12 @@ Return ONLY the summary text.
 
 # ----------------- AI Skills Generation -----------------
 def generate_skills_with_ai(
-    title: str,
-    experience: List[str],
-    current_skills: List[str] = None
+        title: str,
+        experience: List[str],
+        current_skills: List[str] = None
 ) -> List[str]:
     """Generate skills list using AI based on title and experience"""
-    
+
     if not client:
         print("❌ Gemini client not initialized")
         return generate_fallback_skills(title)
@@ -208,7 +217,7 @@ Return ONLY the comma-separated skills list.
 
         # Parse skills
         skills = [s.strip() for s in skills_text.split(",") if s.strip()]
-        
+
         if len(skills) < 3:
             print("⚠️ Too few skills generated, using fallback")
             return generate_fallback_skills(title)
@@ -222,13 +231,13 @@ Return ONLY the comma-separated skills list.
 
 # ----------------- AI Experience Description Generation -----------------
 def generate_experience_description_with_ai(
-    title: str,
-    company: str,
-    years: str,
-    description: str = ""
+        title: str,
+        company: str,
+        years: str,
+        description: str = ""
 ) -> str:
     """Generate experience description using AI"""
-    
+
     if not client:
         print("❌ Gemini client not initialized")
         return generate_fallback_experience_description(title, company, description)
@@ -272,13 +281,13 @@ Return ONLY the experience description.
 
 # ----------------- CV PDF generation -----------------
 def generate_cv_gemini(
-    name: str,
-    title: str,
-    skills: List[str],
-    experience: List[str],
-    style: str = "minimal",
-    user_id: str = "default",
-    full_data: Dict[str, Any] = None
+        name: str,
+        title: str,
+        skills: List[str],
+        experience: List[str],
+        style: str = "minimal",
+        user_id: str = "default",
+        full_data: Dict[str, Any] = None
 ) -> str:
     """Generate CV PDF with complete data structure"""
 
@@ -340,7 +349,7 @@ def generate_cv_gemini(
         "Contact", parent=styles["Normal"], fontSize=10, textColor=HexColor("#718096")
     )
     heading_style = ParagraphStyle(
-        "Heading", parent=styles["Heading2"], fontSize=13, textColor=HexColor("#2d3748"), 
+        "Heading", parent=styles["Heading2"], fontSize=13, textColor=HexColor("#2d3748"),
         spaceAfter=8, spaceBefore=12, fontName="Helvetica-Bold"
     )
     body_style = ParagraphStyle(
@@ -356,7 +365,7 @@ def generate_cv_gemini(
     # Header
     story.append(Paragraph(name, title_style))
     story.append(Paragraph(title, subtitle_style))
-    
+
     # Contact info
     contact_parts = []
     if email:
@@ -365,10 +374,10 @@ def generate_cv_gemini(
         contact_parts.append(f"☎ {phone}")
     if location:
         contact_parts.append(f"📍 {location}")
-    
+
     if contact_parts:
         story.append(Paragraph(" • ".join(contact_parts), contact_style))
-    
+
     story.append(Spacer(1, 0.2 * inch))
 
     # Summary
@@ -385,7 +394,7 @@ def generate_cv_gemini(
             exp_company = exp.get("company", "")
             exp_years = exp.get("years", "")
             exp_desc = exp.get("description", "")
-            
+
             if exp_title and exp_company:
                 story.append(Paragraph(f"{exp_title} — {exp_years}", job_title_style))
                 story.append(Paragraph(exp_company, company_style))
@@ -401,7 +410,7 @@ def generate_cv_gemini(
             edu_school = edu.get("school", "")
             edu_degree = edu.get("degree", "")
             edu_years = edu.get("years", "")
-            
+
             if edu_school:
                 story.append(Paragraph(f"{edu_school} — {edu_years}", job_title_style))
                 if edu_degree:
@@ -421,7 +430,7 @@ def generate_cv_gemini(
         for proj in projects_list:
             proj_name = proj.get("name", "")
             proj_desc = proj.get("description", "")
-            
+
             if proj_name:
                 story.append(Paragraph(proj_name, job_title_style))
                 if proj_desc:
@@ -437,3 +446,43 @@ def generate_cv_gemini(
     doc.build(story)
     print(f"✅ CV generated: {pdf_path}")
     return pdf_path
+
+
+# Optional: Test function if running directly
+if _name_ == "_main_":
+    # Test the functions
+    test_data = {
+        "name": "John Doe",
+        "title": "Software Engineer",
+        "skills": ["Python", "JavaScript", "React", "Node.js", "Docker"],
+        "experience": [
+            {
+                "title": "Senior Developer",
+                "company": "Tech Corp",
+                "years": "2020-2023",
+                "description": "Led development of microservices architecture"
+            },
+            {
+                "title": "Developer",
+                "company": "StartupCo",
+                "years": "2018-2020",
+                "description": "Built full-stack web applications"
+            }
+        ],
+        "email": "john@example.com",
+        "phone": "+1234567890",
+        "location": "New York, NY"
+    }
+
+    if client:
+        print("Testing summary generation...")
+        summary = generate_summary_with_ai(
+            name=test_data["name"],
+            title=test_data["title"],
+            skills=test_data["skills"],
+            experience=[],
+            experience_list=test_data["experience"]
+        )
+        print(f"Generated summary: {summary}")
+    else:
+        print("Client not initialized. Check your API key.")
