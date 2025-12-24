@@ -34,7 +34,6 @@ SESSION = {}
 
 # ----------------- CORS -----------------
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://linked-resumes.lovable.app")
-FRONTEND_URL = "http://localhost:8080"
 origins = [FRONTEND_URL]
 app.add_middleware(
     CORSMiddleware,
